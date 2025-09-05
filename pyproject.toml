@@ -1,0 +1,36 @@
+[build-system]
+requires = ["setuptools >= 61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "steamboat"
+version = "0.1.1"
+authors = [
+  {name="Shaoheng Liang", email="contact@using.issues"},
+  {name="Shaoheng Liang", email="author@example.com"},
+  {name="Jian Ma", email="author@example.com"},
+]
+description = ""
+readme = "readme.md"
+requires-python = ">=3.8"
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+]
+dependencies = [
+    "torch",
+    "tqdm",
+    "scanpy",
+    "squidpy",
+    "numpy",
+    "scipy",
+    "tensorboardX"
+]
+
+[project.urls]
+Homepage = "https://github.com/ma-compbio/Steamboat"
+Issues = "https://github.com/ma-compbio/Steamboat/issues"
+
+[tool.setuptools]
+py-modules = ["steamboat"]
