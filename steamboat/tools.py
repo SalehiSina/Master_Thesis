@@ -73,7 +73,7 @@ def calc_head_weights(device, adatas, model):
     return matrix
 
 
-def plot_head_weights(head_weights, multiplier: float = 100, order=None, figsize=(7, 0.8), heatmap_kwargs=None, save: str = None):
+def plot_head_weights(head_weights, multiplier: float = 100, order=None, figsize=(10, 1), heatmap_kwargs=None, save: str = None):
     """Plot head weights calculated by calc_head_weights
 
     :param head_weights: head weights calculated by calc_head_weights
@@ -105,7 +105,7 @@ def plot_head_weights(head_weights, multiplier: float = 100, order=None, figsize
         fig.savefig(save, bbox_inches='tight', transparent=True)
 
 
-def calc_interaction(adatas, model: Steamboat, sample_key: str, cell_type_key: str, pseudocount: float = 20.):
+def calc_interaction(device, adatas, model: Steamboat, sample_key: str, cell_type_key: str, pseudocount: float = 20.):
     """Calculate interaction matrix
 
     :param adatas: all adatas
@@ -115,7 +115,7 @@ def calc_interaction(adatas, model: Steamboat, sample_key: str, cell_type_key: s
     :param pseudocount: pseudocount in denominator when averaging scores in cell type pairs, defaults to 20.
     :return: interaction matrices (one per sample) in a dictionary
     """
-    v_weights = calc_v_weights(model)
+    v_weights = calc_v_weights(device, model)
     celltype_attnp_df_dict = {}
     for i in range(len(adatas)):    
         total_attnp = None
@@ -133,7 +133,8 @@ def calc_interaction(adatas, model: Steamboat, sample_key: str, cell_type_key: s
             mask0 = (adatas[i].obs[cell_type_key] == celltype0)
             for celltype1 in celltype_attnp_df.columns:
                 mask1 = (adatas[i].obs[cell_type_key] == celltype1)
-                sub_attnp = total_attnp[mask0, :][:, mask1]
+                sub_attnp = total_attnp[mask0.to_numpy()][:, mask1.to_numpy()]
+                #sub_attnp = total_attnp[mask0, :][:, mask1]
                 normalization_factor = sub_attnp.nnz + 20
                 # normalization_factor = np.prod(sub_attnp.shape)
                 if normalization_factor >= 1:
@@ -146,7 +147,7 @@ def calc_interaction(adatas, model: Steamboat, sample_key: str, cell_type_key: s
     return celltype_attnp_df_dict
 
 
-def calc_adjacency_freq(adatas, sample_key: str, cell_type_key: str):
+def calc_adjacency_freq(device, adatas, sample_key: str, cell_type_key: str):
     """Calculate baseline interaction matrix determined by adjacency frequency
 
     :param adatas: all adatas
@@ -216,12 +217,13 @@ def calc_geneset_auroc_order(sig_df, by='q'):
     :param by: by which metagene, defaults to 'q'
     :return: ordering of the metagenes
     """
+    print("Stupid_2")
     plt_df = sig_df[sig_df.index.str.contains(by + '_')]
     order = np.argsort(np.argmax(plt_df, axis=1) - np.max(plt_df, axis=1) / (np.max(plt_df) + 1)).tolist()
     return order
 
 
-def plot_geneset_auroc(sig_df, order, figsize=(8, 5)):
+def plot_geneset_auroc(sig_df, order, figsize=(10, 6)):
     """Plot gene set enrichment by AUROC
 
     :param sig_df: Analysis results
