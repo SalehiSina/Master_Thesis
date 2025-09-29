@@ -6,14 +6,6 @@ import sys
 import scanpy as sc
 import squidpy as sq
 import pandas as pd
-from tqdm.notebook import tqdm
-import scipy as sp
-import numpy as np
-from sksurv.nonparametric import kaplan_meier_estimator
-import matplotlib
-import matplotlib.pyplot as plt
-import pickle as pkl
-import seaborn as sns
 
 sf.set_random_seed(0)
 
