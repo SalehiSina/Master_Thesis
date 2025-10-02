@@ -607,8 +607,9 @@ def plot_all_transforms(model: Steamboat,
             k1 = model.spatial_gather.k_local.weight[d, :].detach().cpu().numpy()
             k2 = model.spatial_gather.k_regionals[0].weight[d, :].detach().cpu().numpy()
             q = model.spatial_gather.q.weight[d, :].detach().cpu().numpy()
+ 
             v = model.spatial_gather.v.weight[:, d].detach().cpu().numpy()
-        
+ 
             rank_q = np.argsort(-q)[:top]
             rank_k1 = np.argsort(-k1)[:top]
             rank_k2 = np.argsort(-k2)[:top]
@@ -622,6 +623,7 @@ def plot_all_transforms(model: Steamboat,
                 feature_mask[j] = None
             for j in rank_v:
                 feature_mask[j] = None
+
         feature_mask = list(feature_mask.keys())
         chosen_features = np.array(model.features)[feature_mask]
     else:
