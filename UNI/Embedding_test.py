@@ -54,37 +54,39 @@ transform = transforms.Compose(
 if __name__ == "__main__":
 
     # Path to the images directory
-    directory = "../../Data/H&E_Patch_Examples"
+    directory = "../../Data/H&E_Patch_Examples_1"
 
     # Get all file names (including directories)
     all_items = os.listdir(directory)
 
     embedding_dic = {}
     for item in tqdm(all_items):
-        # 1. Load the patch (RGB)
-        img = Image.open(f"../../Data/H&E_Patch_Examples/{item}").convert("RGB")
+        # Skip directories, keep only files
+        if not os.path.isfile(os.path.join(directory, item)):
+            continue
 
-        # 2. Preprocess: resize → tensor → normalize
+        # 1. Load the patch (RGB)
+        img = Image.open(os.path.join(directory, item)).convert("RGB")
+
+        # 2. Preprocess
         transform = transforms.Compose([
             transforms.Resize((224, 224)),
             transforms.ToTensor(),
             transforms.Normalize(mean=[0.485, 0.456, 0.406],
                                 std=[0.229, 0.224, 0.225])
         ])
-
-        img_tensor = transform(img).unsqueeze(0)  # add batch dim [1, 3, 224, 224]
-
+        img_tensor = transform(img).unsqueeze(0)  # [1,3,224,224]
 
         # 3. Extract embedding
         with torch.no_grad():
             embedding = model(img_tensor.to(device))
 
-        center_id = item[28:-13]
+        # Extract a more robust center_id from the filename
+        center_id = item[28:36]  
+        # Append embedding
         if center_id not in embedding_dic:
             embedding_dic[center_id] = []
-            embedding_dic[center_id].append(embedding[0].cpu())
-        else:
-            embedding_dic[center_id].append(embedding[0].cpu())
+        embedding_dic[center_id].append(embedding[0].cpu())
 
 
 
@@ -100,9 +102,10 @@ if __name__ == "__main__":
             [f"region around {id1}"] * len(embedding_dic[id1]) +
             [f"region around {id2}"] * len(embedding_dic[id2]))
 
-
+    print(len(embedding_dic[id0]))
     # Map each string label to a unique integer
     unique_labels = list(set(labels))
+    print(unique_labels)
     label_to_int = {label: i for i, label in enumerate(unique_labels)}
     label_colors = [label_to_int[l] for l in labels]
 
@@ -122,4 +125,4 @@ if __name__ == "__main__":
     plt.title("UMAP projection of vectors")
     plt.xlabel("UMAP-1")
     plt.ylabel("UMAP-2")
-    plt.savefig("umap_projection.png", dpi=300, bbox_inches='tight')
+    plt.savefig("umap_projection_2.png", dpi=300, bbox_inches='tight')
