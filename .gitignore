@@ -1,1 +1,7 @@
 assets/ckpts/uni2-h/pytorch_model.bin
+examples/saved_h5ad/Xmbrain_0_50_0.3.h5ad
+examples/saved_h5ad/Xmbrain_0_100.h5ad
+examples/saved_h5ad/Xmbrain_0.h5ad
+examples/saved_h5ad/Xmbrain_50_0.3.h5ad
+examples/saved_h5ad/Xmbrain_100.h5ad
+examples/saved_h5ad/Xmbrain.h5ad

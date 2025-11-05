@@ -321,6 +321,7 @@ class Steamboat(nn.Module):
             *, 
             opt=None, opt_args=None, 
             loss_fun=None,
+            sched = None, max_lr = None,
             max_epoch: int = 100, stop_eps: float = 1e-4, stop_tol: int = 10, 
             log_dir: str = 'log/', report_per: int = 10):
         """Create a PyTorch Dataset from a list of adata
@@ -358,6 +359,14 @@ class Steamboat(nn.Module):
             optimizer = optim.Adam(parameters, **opt_args)
         else:
             optimizer = opt(parameters, **opt_args)
+
+        if sched != None:
+            scheduler = sched(optimizer,
+                              max_lr=max_lr,        # highest LR in the cycle
+                              total_steps=10000,  # must match max_epoch
+                              pct_start=0.3,      # % of cycle to warm up
+                              anneal_strategy='cos'
+                              )
 
         os.makedirs(log_dir, exist_ok=True)
         logger = _get_logger('train', log_dir)
@@ -403,7 +412,10 @@ class Steamboat(nn.Module):
                 # if weight_l2_penalty > 0.:
                 #     reg += self.spatial_gather.l2_reg() * weight_l2_penalty
                 #     total_penalty += reg.item()
+
             optimizer.step()
+            if sched != None: 
+                scheduler.step() 
 
             if best_loss - avg_loss < stop_eps:
                 cnt += 1
