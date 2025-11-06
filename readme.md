@@ -22,5 +22,5 @@
 Distributed under the MIT License. 
 
 ## 👤 Authors
-- Your Name — https://github.com/SalehiSina
+- Sina — https://github.com/SalehiSina
 
