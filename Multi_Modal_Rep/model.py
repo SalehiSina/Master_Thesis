@@ -3,14 +3,12 @@ import numpy as np
 from torch import nn
 from torch import optim
 from torch.utils.data import DataLoader
-from .utils import _get_logger
 from .dataset import SteamboatDataset
 import os
-from typing import Literal
 
 
 class Encoder(nn.Module):
-    def __init__(self, input_dim, output_dim, hidden_dim1=1024, hidden_dim2=2048):
+    def __init__(self, input_dim, output_dim, hidden_dim1=1024, hidden_dim2=1024):
         super(Encoder, self).__init__()
         
         self.network = nn.Sequential(
@@ -109,7 +107,7 @@ class NonNegScale3(nn.Module):
 
 
 class BilinearAttention(nn.Module):
-    def __init__(self, d_in: int, d_in_M: int, n_heads: int, n_scales: int = 2, d_out: int = None):
+    def __init__(self, d_in: int, d_in_M: int, n_heads: int, model_type: int=0,  n_scales: int = 2, d_out: int = None):
         """Bilinear attention layer
 
         :param d_in: number of input features
@@ -119,54 +117,49 @@ class BilinearAttention(nn.Module):
         """
         super().__init__()
         if d_out == None:
-            d_out = d_in
-        self.d_in = d_out 
-        self.d_in_M = d_out
+            self.d_out = d_in
+        else:
+            self.d_out = d_out
         self.n_heads = n_heads
         self.n_scales = n_scales
+        self.model_type = model_type
 
-        self.encoder_m = Encoder(input_dim = d_in_M, output_dim=d_out)
+        self.encoder_m = Encoder(input_dim = d_in, output_dim=d_out)
+        self.encoder_g = Encoder(input_dim = d_in_M, output_dim=d_out)
         
-        # self.switch = ScaleSwtich(n_heads, n_scales=2)
-
-        # A bias layer for the output to account for any "DC" component
-        #self.bias = NonNegBias(d_out)
-
-        # The transforms are shared by all scales
-        # n * g -> n * d
-        self.q = NonNegLinear(self.d_in, n_heads, bias=False) # each row of the weight matrix is a metagene (x -> x @ w.T)
-        # self.k = NonNegLinear(d_in, n_heads, bias=False) # each row ...
-        self.k_Morpho = NonNegLinear(self.d_in_M, n_heads, bias=False)
+        self.q_m = NonNegLinear(self.d_out, n_heads, bias=False)
+        self.q_g = NonNegLinear(self.d_out, n_heads, bias=False)
         
-        self.k_local = NonNegLinear(self.d_in, n_heads, bias=False)
-        self.k_regionals = nn.ModuleList(NonNegLinear(d_in, n_heads, bias=False)
-                                         for i in range(n_scales - 2))
+        self.k_m = NonNegLinear(self.d_out, n_heads, bias=False)
+        self.k_g = NonNegLinear(self.d_out, n_heads, bias=False)
+        
+        self.k_local_m = NonNegLinear(self.d_out, n_heads, bias=False)
+        self.k_local_g = NonNegLinear(self.d_out, n_heads, bias=False)
             
-        self.w_ego = NonNegScale(n_heads)
-        self.w_Morpho = NonNegScale(n_heads)
+        self.w_ego_m = NonNegScale(n_heads)
+        self.w_ego_g = NonNegScale(n_heads)
+        self.w_ego_mg = NonNegScale(n_heads)
+        self.w_ego_gm = NonNegScale(n_heads)
 
-        # add these two:
-        self.w_local = NonNegScale3(n_heads)
-        self.w_global = NonNegScale3(n_heads)
+        self.w_local_mm = NonNegScale3(n_heads)
+        self.w_local_gg = NonNegScale3(n_heads)
+        self.w_local_mg = NonNegScale3(n_heads)
+        self.w_local_gm = NonNegScale3(n_heads)
 
         self.tanh = nn.Tanh() # for clamping of the values
 
-        self.v = NonNegLinear(n_heads, d_in, bias=False) # each column ...
-        # self.v = TransposedNonNegLinear(self.q)
+        self.v_m = NonNegLinear(n_heads, d_in_M, bias=False)
+        self.v_g = NonNegLinear(n_heads, d_in, bias=False)
 
-        # remember some variables during forward
-        # Note: with gradient; detach before use when gradient is not needed
-        self.q_emb = None
-        self.k_morpho_emb = None
-        self.k_local_emb = None
-        self.k_regional_embs = None
 
-        # For debugging
-        # self.attn_shortcut = torch.nn.Sequential(torch.nn.Linear(d_in, n_heads), 
-        #                                          torch.nn.Tanh(), 
-        #                                          torch.nn.Linear(n_heads, n_heads),
-        #                                          torch.nn.Tanh())
-        # self.v_shortcut = torch.nn.Linear(n_heads, d_out)
+        #self.q_emb_m = None
+        #self.q_emb_g = None
+
+        #self.k_emb_m = None
+        #self.k_emb_g = None
+        
+        #self.k_local_emb_m = None
+        #self.k_local_emb_g = None
 
         self.cosine_similarity = nn.CosineSimilarity(dim=-2)
 
@@ -213,7 +206,7 @@ class BilinearAttention(nn.Module):
 
         return scores
 
-    def forward(self, adj_list, x, m, masked_x=None, regional_adj_lists=None, regional_xs=None, get_details=False):
+    def forward(self, adj_list, x, m, masked_x=None, masked_m=None, get_details=False):
         """Forward pass
 
         :param adj_list: adjacency list for spatial graph
@@ -224,85 +217,159 @@ class BilinearAttention(nn.Module):
         :param get_details: whether to return details, defaults to False
         :return: reconstructed gene expression
         """
-        assert isinstance(regional_xs, list), "regional_xs should be a list of regional features."
-        if regional_adj_lists is None:
-            regional_adj_lists = []
-        if regional_xs is None:
-            regional_xs = []
-        assert len(regional_adj_lists) == len(regional_xs)
-        assert self.n_scales == len(regional_xs) + 2
+        model_type = self.model_type
 
         if masked_x is None:
             masked_x = x
 
-        #Get the embeddings
-        #masked_x = self.encoder_x(masked_x)
-        m = self.encoder_m(m)
+        if masked_m is None:
+            masked_m = m
 
-        # Get embeddings for all cells and regions
-        q_emb = self.q(masked_x) / masked_x.shape[1]
-        k_morpho_emb = self.k_Morpho(m) / m.shape[1]
-        k_local_emb = self.k_local(masked_x) / masked_x.shape[1]
-        k_regional_embs = [self.k_regionals[i](regional_x) / x.shape[1] 
-                           for i, regional_x in enumerate(regional_xs)]
+        m_emb = self.encoder_m(masked_m)
+        g_emb = self.encoder_g(masked_x)
+
+        # Get embeddings for all cells
+        q_emb_m = self.q_m(m_emb) / m_emb.shape[1]
+        q_emb_g = self.q_g(g_emb) / g_emb.shape[1]
+
+        k_emb_m = self.k_m(m_emb) / m_emb.shape[1]
+        k_emb_g = self.k_g(g_emb) / g_emb.shape[1]
+
+        k_local_emb_m = self.k_local_emb_m(m_emb) / m_emb.shape[1]
+        k_local_emb_g = self.k_local_emb_g(g_emb) / g_emb.shape[1]
 
         # Get raw attention scores
-        # scale_switch = self.switch() # h * s
-        ego_score = self.w_ego(self.score_intrinsic(q_emb, q_emb)) # * scale_switch[:, 0].reshape([1, self.n_heads])
-        #local_score = (self.score_interactive(q_emb, k_local_emb, adj_list)) #  * scale_switch[:, 1].reshape([1, self.n_heads, 1]) # n * h * m
-        morpho_score = self.w_Morpho(self.score_intrinsic(q_emb, k_morpho_emb))
-        local_score = self.w_local((self.score_interactive(q_emb, k_local_emb,
-                                              adj_list)))  # * scale_switch[:, 1].reshape([1, self.n_heads, 1]) # n * h * m
+        ego_score_m = self.w_ego_m(self.score_intrinsic(q_emb_m, k_emb_m))
+        ego_score_g = self.w_ego_g(self.score_intrinsic(q_emb_g, k_emb_g))
+        ego_score_mg = self.w_ego_m(self.score_intrinsic(q_emb_m, k_emb_g))
+        ego_score_gm = self.w_ego_g(self.score_intrinsic(q_emb_g, k_emb_m))
 
-        #regional_scores = [(self.score_interactive(q_emb, k_regional_emb, regional_adj_list))
-        #                   for i, (k_regional_emb, regional_adj_list) in enumerate(zip(k_regional_embs, regional_adj_lists))]
-        regional_scores = [(self.w_global(self.score_interactive(q_emb, k_regional_emb, regional_adj_list)))
-                           for i, (k_regional_emb, regional_adj_list) in
-                           enumerate(zip(k_regional_embs, regional_adj_lists))]
-        # regional_scores = [self.score_interactive(q_emb, k_regional_emb, adj_list) * scale_switch[:, i + 2].reshape([1, self.n_heads, 1]) for i, k_regional_emb in enumerate(k_regional_embs)]
+        local_score_mm = self.w_local((self.score_interactive(q_emb_m, k_local_emb_m, adj_list)))
+        local_score_mg = self.w_local((self.score_interactive(q_emb_m, k_local_emb_g, adj_list)))
+        local_score_gm = self.w_local((self.score_interactive(q_emb_g, k_local_emb_m, adj_list)))
+        local_score_gg = self.w_local((self.score_interactive(q_emb_g, k_local_emb_g, adj_list)))
 
         # Normalize attention scores
-        sum_local_score = torch.sum(local_score, dim=-1)
-        sum_regional_scores = [torch.sum(regional_score, dim=-1) for regional_score in regional_scores]
-        sum_score = ego_score + morpho_score + sum_local_score + sum(sum_regional_scores) # n * h
+        sum_local_score_mm = torch.sum(local_score_mm, dim=-1)
+        sum_local_score_mg = torch.sum(local_score_mg, dim=-1)
+        sum_local_score_gm = torch.sum(local_score_gm, dim=-1)
+        sum_local_score_gg = torch.sum(local_score_gg, dim=-1)
+
+        # Dynamic Part
+        if model_type == 0:
+            local_score = local_score_mm + local_score_mg + local_score_gm + local_score_gg
+            
+            sum_local_score = sum_local_score_mm + sum_local_score_mg + sum_local_score_gm + sum_local_score_gg
+            sum_ego_score = ego_score_m + ego_score_g + ego_score_gm + ego_score_mg
+
+        elif model_type == 1:
+            local_score = local_score_mm + local_score_mg + local_score_gm + local_score_gg
+            
+            sum_local_score = sum_local_score_mm + sum_local_score_mg + sum_local_score_gm + sum_local_score_gg
+            sum_ego_score = ego_score_m + ego_score_gm
+
+        elif model_type == 2:
+            local_score = local_score_mm + local_score_gm
+            
+            sum_local_score = sum_local_score_mm + sum_local_score_gm
+            sum_ego_score = ego_score_m + ego_score_g + ego_score_gm + ego_score_mg
+
+        elif model_type == 3:
+            local_score = local_score_mm + local_score_mg + local_score_gm + local_score_gg
+            
+            sum_local_score = sum_local_score_mm + sum_local_score_mg + sum_local_score_gm + sum_local_score_gg
+            sum_ego_score = ego_score_g + ego_score_mg
+
+        elif model_type == 4:
+            local_score = local_score_mg + local_score_gg
+            
+            sum_local_score = sum_local_score_mg + sum_local_score_gg
+            sum_ego_score = ego_score_m + ego_score_g + ego_score_gm + ego_score_mg
+
+        elif model_type == 5:
+            local_score = local_score_mm + local_score_gm
+            
+            sum_local_score = sum_local_score_mm + sum_local_score_gm
+            sum_ego_score = ego_score_m + ego_score_gm
+
+        elif model_type == 6:
+            local_score = local_score_mg + local_score_gg
+            
+            sum_local_score = sum_local_score_mg + sum_local_score_gg
+            sum_ego_score = ego_score_g + ego_score_mg
+
+        elif model_type == 7:
+            local_score = local_score_mm + local_score_mg + local_score_gm + local_score_gg
+            
+            sum_local_score = sum_local_score_mm + sum_local_score_mg + sum_local_score_gm + sum_local_score_gg
+            sum_ego_score = torch.zeros_like(ego_score_g)
+        
+        elif model_type == 8:
+            local_score = torch.zeros_like(local_score_mm)
+            
+            sum_local_score = torch.zeros_like(sum_local_score_mm)
+            sum_ego_score = ego_score_m + ego_score_g + ego_score_gm + ego_score_mg
+
+        elif model_type == 9:
+            local_score = local_score_mm + local_score_gm
+            
+            sum_local_score = sum_local_score_mm + sum_local_score_gm 
+            sum_ego_score = ego_score_g + ego_score_mg
+
+        elif model_type == 10:
+            local_score = local_score_mg + local_score_gg
+            
+            sum_local_score = sum_local_score_mg + sum_local_score_gg
+            sum_ego_score = ego_score_m + ego_score_mg
+
+        elif model_type == 11:
+            local_score = local_score_mg + local_score_gg
+            
+            sum_local_score = sum_local_score_mg + sum_local_score_gg
+            sum_ego_score = torch.zeros_like(ego_score_g)
+
+        elif model_type == 12:
+            local_score = local_score_mm + local_score_gm
+            
+            sum_local_score = sum_local_score_mm + sum_local_score_gm
+            sum_ego_score = torch.zeros_like(ego_score_m)
+
+        sum_score = sum_ego_score + sum_local_score
         normalization_factor = sum_score.sum(axis=-1, keepdim=True) + 1e-9 # n * 1
-
         sum_attn = sum_score / normalization_factor
-        # res = self.bias(self.v(sum_attn))
-        # sum_attn = self.attn_shortcut(x)
-        res = self.v(sum_attn)
-        # res = self.v_shortcut(sum_attn)
+        
+        res_m = self.v_m(sum_attn)
+        res_g = self.v_g(sum_attn)
+        
+        #self.q_emb_m = q_emb_m
+        #self.q_emb_g = q_emb_g
 
-        self.q_emb = q_emb
-        self.k_morpho_emb = k_morpho_emb
-        self.k_local_emb = k_local_emb
-        self.k_regional_embs = k_regional_embs
+        #self.k_emb_m = k_emb_m
+        #self.k_emb_g = k_emb_g
+        
+        #self.k_local_emb_m = k_local_emb_m
+        #self.k_local_emb_g = k_local_emb_g
+        
+        ego_score = sum_ego_score
 
         if get_details:
             ego_attnp = ego_score / normalization_factor
-            morpho_attnp = morpho_score / normalization_factor
             local_attnp = local_score / normalization_factor[:, :, None]
-            regional_attnps = [regional_score / normalization_factor[:, :, None] for regional_score in regional_scores]
-            # regional_attnps = [regional_score for regional_score in regional_scores]
 
             ego_attnm = ego_attnp
-            morpho_attnm = morpho_attnp
             local_attnm = local_attnp.sum(axis=-1)
-            regional_attnms = [regional_attnp.sum(axis=-1) for regional_attnp in regional_attnps]
 
-            return res, {
+            return res_m, res_g, {
                 'attn': sum_attn,
-                'embq': q_emb,
-                'embmorpho': k_morpho_emb,
-                'embk': (k_local_emb, k_regional_embs),
-                'attnp': (ego_attnp, morpho_attnp, local_attnp, regional_attnps),
-                'attnm': (ego_attnm, morpho_attnm, local_attnm, regional_attnms)}
+                'attnp': (ego_attnp, local_attnp),
+                'attnm': (ego_attnm, local_attnm)
+                }
         else:
-            return res
+            return res_m, res_g
 
     
 class Steamboat(nn.Module):
-    def __init__(self, features: list[str] | int, Morpho_features: int, n_heads: int, n_scales: int = 2):
+    def __init__(self, features: list[str] | int, Morpho_features: int, n_heads: int, model_type: int, n_scales: int = 2):
         """Steamboat model
 
         :param features: feature names (usuall `adata.var_names` or a column in `adata.var` for gene symbols)
@@ -315,12 +382,11 @@ class Steamboat(nn.Module):
             self.features = features
         else:
             self.features = [f'feature_{i}' for i in range(features)]
-
         d_in = len(self.features)
         d_in_M = Morpho_features
-        self.spatial_gather = BilinearAttention(d_in, d_in_M, n_heads, n_scales)
+        self.spatial_gather = BilinearAttention(d_in, d_in_M, model_type, n_heads, n_scales)
 
-    def masking(self, x: torch.Tensor, xs, entry_masking_rate: float, feature_masking_rate: float):
+    def masking(self, x: torch.Tensor, entry_masking_rate: float):
         """Masking the dataset
 
         :param x: input data
@@ -329,35 +395,23 @@ class Steamboat(nn.Module):
         :return: masked data
         """
         out_x = x.clone()
-        out_xs = []
         if entry_masking_rate > 0.:
             random_mask = torch.rand(x.shape, device=x.device) < entry_masking_rate
             out_x.masked_fill_(random_mask, 0.)
-        if feature_masking_rate > 0.:
-            random_mask = torch.rand([1, x.shape[1]], device=x.device) < feature_masking_rate
-            out_x.masked_fill_(random_mask, 0.)
-            for x in xs:
-                x = x.clone()
-                x.masked_fill_(random_mask, 0.)
-                out_xs.append(x)
-        else:
-            for x in xs:
-                x = x.clone()
-                out_xs.append(x)
-        return out_x, out_xs
-
-    def forward(self, adj_list, x, M, masked_x, regional_adj_lists, regional_xs, get_details=False):
-        return self.spatial_gather(adj_list, x, M, masked_x, regional_adj_lists, regional_xs, get_details)
+        return out_x
+    
+    def forward(self, adj_list, x, m, masked_x, masked_m, get_details=False):
+        return self.spatial_gather(adj_list, x, m, masked_x, masked_m, get_details)
 
     def fit(self, dataset: SteamboatDataset, 
-            entry_masking_rate: float = 0.0, feature_masking_rate: float = 0.0,
+            entry_masking_rate: float = 0.0,
             device:str = 'cuda', 
             *, 
             opt=None, opt_args=None, 
             loss_fun=None,
             sched = None, max_lr = None,
             max_epoch: int = 100, stop_eps: float = 1e-4, stop_tol: int = 10, 
-            log_dir: str = 'log/', report_per: int = 10):
+            report_per: int = 10):
         """Create a PyTorch Dataset from a list of adata
 
         :param dataset: Dataset to be trained on
@@ -402,184 +456,43 @@ class Steamboat(nn.Module):
                               anneal_strategy='cos'
                               )
 
-        os.makedirs(log_dir, exist_ok=True)
-        logger = _get_logger('train', log_dir)
-        # writer = SummaryWriter(logdir=log_dir)
-
         cnt = 0
         best_loss = np.inf
-        #n_cells = 0
-        #n_genes = 0
-        #for x, _, _, _, _, _ in loader:
-        #    n_cells += x.shape[0]
-        #    n_genes = x.shape[1]
         for epoch in range(max_epoch):
             avg_loss = 0.
             optimizer.zero_grad()
-            for x, m, adj_list, regional_xs, _, regional_adj_lists in loader:
+            for x, m, adj_list in loader:
                 # Send everything to required device
                 adj_list = adj_list.squeeze(0).to(device)
                 x = x.squeeze(0).to(device)
                 m = m.squeeze(0).to(device)
-                regional_adj_lists = [regional_adj_list.squeeze(0).to(device) for regional_adj_list in regional_adj_lists]
-                regional_xs = [regional_x.squeeze(0).to(device) for regional_x in regional_xs]
 
-                masked_x, masked_xs = self.masking(x, regional_xs, entry_masking_rate, feature_masking_rate)
+                masked_x = self.masking(x, entry_masking_rate)
+                masked_m = self.masking(m, entry_masking_rate)
 
-                x_recon = self.forward(adj_list, masked_x, m, masked_x, 
-                                       regional_adj_lists, masked_xs, get_details=False)
-                
-                # loss = criterion(x_recon, x)
-                # total_loss = loss + total_loss
-                #loss = criterion(x_recon, x) / n_cells / n_genes
-                loss = criterion(x_recon, x)
+                m_recon, x_recon = self.forward(adj_list, x, m, masked_x, masked_m)
+
+                loss = criterion(x_recon, x) + criterion(m_recon, m)
                 avg_loss += loss.item()
                 loss.backward()
-                # n_cells += x.shape[0]
-                # loss = loss * x.shape[0] / 10000 # handle size differences among datasets; larger dataset has higher weight
+                optimizer.step()
 
-                # reg = 0.
-                # if flat_k_penalty > 0.:
-                #     reg += self.spatial_gather.flat_k_penalty(**flat_k_penalty_args) * flat_k_penalty
-                #     total_penalty += reg.item()
-                # if switch_l2_penalty > 0.:
-                #     reg += self.spatial_gather.switch.l2_reg() * switch_l2_penalty
-                #     total_penalty += reg.item()
-                # if weight_l2_penalty > 0.:
-                #     reg += self.spatial_gather.l2_reg() * weight_l2_penalty
-                #     total_penalty += reg.item()
-
-            optimizer.step()
-            if sched != None: 
-                scheduler.step() 
+                if sched != None: 
+                    scheduler.step() 
 
             if best_loss - avg_loss < stop_eps:
                 cnt += 1
             else:
                 cnt = 0
             if report_per >= 0 and cnt >= stop_tol:
-                logger.info(f"Epoch {epoch + 1}: train_loss {avg_loss:.5f}")
-                logger.info(f"Stopping criterion met.")
+                print(f"Epoch {epoch + 1}: train_loss {avg_loss:.5f}")
+                print(f"Stopping criterion met.")
                 break
             elif report_per > 0 and (epoch % report_per) == 0:
-                logger.info(f"Epoch {epoch + 1}: train_loss {avg_loss:.5f}")
+                print(f"Epoch {epoch + 1}: train_loss {avg_loss:.5f}")
             best_loss = min(best_loss, avg_loss)
-
-            # writer.add_scalar('Train_Loss', train_loss / len(loader), epoch)
-            # writer.add_scalar('Learning_Rate', optimizer.state_dict()["param_groups"][0]["lr"], epoch)
-            # scheduler.step()
         else:
-            logger.info(f"Maximum iterations reached.")
+            print(f"Maximum iterations reached. Final Loss = {avg_loss:.5f}")
             
         self.eval()
         return self
-
-    def transform(self, x, m, adj_matrix):
-        self.eval()
-        with torch.no_grad():
-            if not isinstance(x, torch.Tensor):
-                x = torch.Tensor(x)
-            if not isinstance(m, torch.Tensor):
-                m = torch.Tensor(m)
-            if not isinstance(adj_matrix, torch.Tensor):
-                adj_matrix = torch.Tensor(adj_matrix)
-            
-            return self(adj_matrix, x, m, get_details=True)
-
-
-    def get_bias(self) -> np.array:
-        b = self.spatial_gather.bias.bias.detach().cpu().numpy()
-        return b.T
-
-    def get_ego_transform(self) -> np.array:
-        """Get gene attention matrix
-        
-        :param separate_q_k: If True, return Q and K. Otherwise, return Q.T @ K.
-
-        :return: Gene attention vectors
-        """
-        # qk = self.spatial_gather.qk_ego.weight.detach().cpu().numpy()
-        qk = self.spatial_gather.qk_ego.weight.detach().cpu().numpy()
-        v = self.spatial_gather.v_ego.weight.detach().cpu().numpy()
-        return qk, v.T
-    
-    def get_morpho_transform(self) -> np.array:
-        """Get gene attention matrix
-        
-        :param separate_q_k: If True, return Q and K. Otherwise, return Q.T @ K.
-
-        :return: Gene attention vectors
-        """
-        # qk = self.spatial_gather.qk_ego.weight.detach().cpu().numpy()
-        m = self.spatial_gather.k_Morpho.weight.detach().cpu().numpy()
-        v = self.spatial_gather.v_morpho.weight.detach().cpu().numpy()
-        return m, v.T
-
-    def get_local_transform(self) -> np.array:
-        """Get gene attention matrix
-        
-        :param separate_q_k: If True, return Q and K. Otherwise, return Q.T @ K.
-
-        :return: Gene attention vectors
-        """
-        q = self.spatial_gather.q_local.weight.detach().cpu().numpy()
-        k = self.spatial_gather.k_local.weight.detach().cpu().numpy()
-        v = self.spatial_gather.v_local.weight.detach().cpu().numpy()
-        return q, k, v.T
-        
-    def get_global_transform(self) -> np.array:
-        """Get gene attention matrix
-        
-        :param separate_q_k: If True, return Q and K. Otherwise, return Q.T @ K.
-
-        :return: Gene attention matrix
-        """
-        q = self.spatial_gather.q_global.weight.detach().cpu().numpy()
-        k = self.spatial_gather.k_global.weight.detach().cpu().numpy()
-        v = self.spatial_gather.v_global.weight.detach().cpu().numpy()
-        return q, k, v.T
-       
-    def score_cells(self, x):
-        if isinstance(x, torch.Tensor):
-            x = x.cpu().numpy()
-        res = {}
-        qk_ego, v_ego = self.get_ego_transform()
-        for i in range(qk_ego.shape[0]):
-            res[f'u_ego_{i}'] = x @ qk_ego[i, :]
-        q_local, k_local, v_local = self.get_local_transform()
-        for i in range(q_local.shape[0]):
-            res[f'q_local_{i}'] = x @ q_local[i, :]
-            res[f'k_local_{i}'] = x @ k_local[i, :]
-        if self.spatial_gather.d_global > 0:
-            q_global, k_global, v_global = self.get_global_transform()
-        for i in range(q_global.shape[0]):
-            res[f'q_global_{i}'] = x @ q_global[i, :]
-        return res
-
-    def get_top_features(self, top_k=5):
-        res = {}
-        features = np.array(self.features)
-        qk_ego, v_ego = self.get_ego_transform()
-        for i in range(qk_ego.shape[0]):
-            res[f'U_ego_{i}'] = features[np.argsort(-qk_ego[i, :])[:top_k]].tolist()
-            # res[f'V_ego_{i}'] = features[np.argsort(-v_ego[i, :])[:top_k]].tolist()
-        q_local, k_local, v_local = self.get_local_transform()
-        for i in range(q_local.shape[0]):
-            res[f'Q_local_{i}'] = features[np.argsort(-q_local[i, :])[:top_k]].tolist()
-            res[f'K_local_{i}'] = features[np.argsort(-k_local[i, :])[:top_k]].tolist()
-            res[f'V_local_{i}'] = features[np.argsort(-v_local[i, :])[:top_k]].tolist()
-        if self.spatial_gather.d_global > 0:
-            q_global, k_global, v_global = self.get_global_transform()
-            for i in range(q_global.shape[0]):
-                res[f'Q_global_{i}'] = features[np.argsort(-q_global[i, :])[:top_k]].tolist()
-                res[f'K_global_{i}'] = features[np.argsort(-k_global[i, :])[:top_k]].tolist()
-                res[f'V_global_{i}'] = features[np.argsort(-v_global[i, :])[:top_k]].tolist()
-        return res
-    
-    def score_local(self, x, adj_matrix):
-        with torch.no_grad():
-            return self.spatial_gather.score_local(x, adj_matrix).cpu().numpy()
-    
-    def score_global(self, x, x_bar=None):
-        with torch.no_grad():
-            return self.spatial_gather.score_global(x, x_bar=x_bar).cpu().numpy()
