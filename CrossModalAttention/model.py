@@ -124,8 +124,8 @@ class BilinearAttention(nn.Module):
         self.n_scales = n_scales
         self.model_type = model_type
 
-        self.encoder_m = Encoder(input_dim = d_in, output_dim=d_out)
-        self.encoder_g = Encoder(input_dim = d_in_M, output_dim=d_out)
+        self.encoder_m = Encoder(input_dim = d_in_M, output_dim=self.d_out)
+        self.encoder_g = Encoder(input_dim = d_in, output_dim=self.d_out)
         
         self.q_m = NonNegLinear(self.d_out, n_heads, bias=False)
         self.q_g = NonNegLinear(self.d_out, n_heads, bias=False)
@@ -235,8 +235,8 @@ class BilinearAttention(nn.Module):
         k_emb_m = self.k_m(m_emb) / m_emb.shape[1]
         k_emb_g = self.k_g(g_emb) / g_emb.shape[1]
 
-        k_local_emb_m = self.k_local_emb_m(m_emb) / m_emb.shape[1]
-        k_local_emb_g = self.k_local_emb_g(g_emb) / g_emb.shape[1]
+        k_local_emb_m = self.k_local_m(m_emb) / m_emb.shape[1]
+        k_local_emb_g = self.k_local_g(g_emb) / g_emb.shape[1]
 
         # Get raw attention scores
         ego_score_m = self.w_ego_m(self.score_intrinsic(q_emb_m, k_emb_m))
@@ -244,10 +244,10 @@ class BilinearAttention(nn.Module):
         ego_score_mg = self.w_ego_m(self.score_intrinsic(q_emb_m, k_emb_g))
         ego_score_gm = self.w_ego_g(self.score_intrinsic(q_emb_g, k_emb_m))
 
-        local_score_mm = self.w_local((self.score_interactive(q_emb_m, k_local_emb_m, adj_list)))
-        local_score_mg = self.w_local((self.score_interactive(q_emb_m, k_local_emb_g, adj_list)))
-        local_score_gm = self.w_local((self.score_interactive(q_emb_g, k_local_emb_m, adj_list)))
-        local_score_gg = self.w_local((self.score_interactive(q_emb_g, k_local_emb_g, adj_list)))
+        local_score_mm = self.w_local_mm((self.score_interactive(q_emb_m, k_local_emb_m, adj_list)))
+        local_score_mg = self.w_local_mg((self.score_interactive(q_emb_m, k_local_emb_g, adj_list)))
+        local_score_gm = self.w_local_gm((self.score_interactive(q_emb_g, k_local_emb_m, adj_list)))
+        local_score_gg = self.w_local_gg((self.score_interactive(q_emb_g, k_local_emb_g, adj_list)))
 
         # Normalize attention scores
         sum_local_score_mm = torch.sum(local_score_mm, dim=-1)
@@ -256,83 +256,105 @@ class BilinearAttention(nn.Module):
         sum_local_score_gg = torch.sum(local_score_gg, dim=-1)
 
         # Dynamic Part
+
         if model_type == 0:
+            #print("model_type: ", model_type)
             local_score = local_score_mm + local_score_mg + local_score_gm + local_score_gg
             
             sum_local_score = sum_local_score_mm + sum_local_score_mg + sum_local_score_gm + sum_local_score_gg
             sum_ego_score = ego_score_m + ego_score_g + ego_score_gm + ego_score_mg
 
         elif model_type == 1:
+            #print("model_type: ", model_type)
             local_score = local_score_mm + local_score_mg + local_score_gm + local_score_gg
             
             sum_local_score = sum_local_score_mm + sum_local_score_mg + sum_local_score_gm + sum_local_score_gg
             sum_ego_score = ego_score_m + ego_score_gm
 
         elif model_type == 2:
+            #print("model_type: ", model_type)
             local_score = local_score_mm + local_score_gm
             
             sum_local_score = sum_local_score_mm + sum_local_score_gm
             sum_ego_score = ego_score_m + ego_score_g + ego_score_gm + ego_score_mg
 
         elif model_type == 3:
+            #print("model_type: ", model_type)
             local_score = local_score_mm + local_score_mg + local_score_gm + local_score_gg
             
             sum_local_score = sum_local_score_mm + sum_local_score_mg + sum_local_score_gm + sum_local_score_gg
             sum_ego_score = ego_score_g + ego_score_mg
 
         elif model_type == 4:
+            #print("model_type: ", model_type)
             local_score = local_score_mg + local_score_gg
             
             sum_local_score = sum_local_score_mg + sum_local_score_gg
             sum_ego_score = ego_score_m + ego_score_g + ego_score_gm + ego_score_mg
 
         elif model_type == 5:
+            #print("model_type: ", model_type)
             local_score = local_score_mm + local_score_gm
             
             sum_local_score = sum_local_score_mm + sum_local_score_gm
             sum_ego_score = ego_score_m + ego_score_gm
 
         elif model_type == 6:
+            #print("model_type: ", model_type)
             local_score = local_score_mg + local_score_gg
             
             sum_local_score = sum_local_score_mg + sum_local_score_gg
             sum_ego_score = ego_score_g + ego_score_mg
 
         elif model_type == 7:
+            #print("model_type: ", model_type)
             local_score = local_score_mm + local_score_mg + local_score_gm + local_score_gg
             
             sum_local_score = sum_local_score_mm + sum_local_score_mg + sum_local_score_gm + sum_local_score_gg
             sum_ego_score = torch.zeros_like(ego_score_g)
         
         elif model_type == 8:
+            #print("model_type: ", model_type)
             local_score = torch.zeros_like(local_score_mm)
             
             sum_local_score = torch.zeros_like(sum_local_score_mm)
             sum_ego_score = ego_score_m + ego_score_g + ego_score_gm + ego_score_mg
 
         elif model_type == 9:
+            #print("model_type: ", model_type)
             local_score = local_score_mm + local_score_gm
             
             sum_local_score = sum_local_score_mm + sum_local_score_gm 
             sum_ego_score = ego_score_g + ego_score_mg
 
         elif model_type == 10:
+            #print("model_type: ", model_type)
             local_score = local_score_mg + local_score_gg
             
             sum_local_score = sum_local_score_mg + sum_local_score_gg
-            sum_ego_score = ego_score_m + ego_score_mg
+            sum_ego_score = ego_score_m + ego_score_gm
 
         elif model_type == 11:
+            #print("model_type: ", model_type)
             local_score = local_score_mg + local_score_gg
             
             sum_local_score = sum_local_score_mg + sum_local_score_gg
             sum_ego_score = torch.zeros_like(ego_score_g)
 
         elif model_type == 12:
+            #print("model_type: ", model_type)
             local_score = local_score_mm + local_score_gm
             
             sum_local_score = sum_local_score_mm + sum_local_score_gm
             sum_ego_score = torch.zeros_like(ego_score_m)
+        
+        else:
+            print("model_type is not recognised. current model_type: ", 0)
+            local_score = local_score_mm + local_score_mg + local_score_gm + local_score_gg
+            
+            sum_local_score = sum_local_score_mm + sum_local_score_mg + sum_local_score_gm + sum_local_score_gg
+            sum_ego_score = ego_score_m + ego_score_g + ego_score_gm + ego_score_mg
+
 
         sum_score = sum_ego_score + sum_local_score
         normalization_factor = sum_score.sum(axis=-1, keepdim=True) + 1e-9 # n * 1
@@ -369,7 +391,7 @@ class BilinearAttention(nn.Module):
 
     
 class Steamboat(nn.Module):
-    def __init__(self, features: list[str] | int, Morpho_features: int, n_heads: int, model_type: int, n_scales: int = 2):
+    def __init__(self, features: int, morpho_features: int, n_heads: int, model_type: int, n_scales: int = 2):
         """Steamboat model
 
         :param features: feature names (usuall `adata.var_names` or a column in `adata.var` for gene symbols)
@@ -378,13 +400,10 @@ class Steamboat(nn.Module):
         """
         super().__init__()
 
-        if isinstance(features, list):
-            self.features = features
-        else:
-            self.features = [f'feature_{i}' for i in range(features)]
-        d_in = len(self.features)
-        d_in_M = Morpho_features
-        self.spatial_gather = BilinearAttention(d_in, d_in_M, model_type, n_heads, n_scales)
+        
+        d_in = features
+        d_in_M = morpho_features
+        self.spatial_gather = BilinearAttention(d_in, d_in_M, n_heads, model_type, n_scales)
 
     def masking(self, x: torch.Tensor, entry_masking_rate: float):
         """Masking the dataset
@@ -459,6 +478,8 @@ class Steamboat(nn.Module):
         cnt = 0
         best_loss = np.inf
         for epoch in range(max_epoch):
+            avg_gene_loss = 0.
+            avg_morpho_loss = 0.
             avg_loss = 0.
             optimizer.zero_grad()
             for x, m, adj_list in loader:
@@ -472,8 +493,14 @@ class Steamboat(nn.Module):
 
                 m_recon, x_recon = self.forward(adj_list, x, m, masked_x, masked_m)
 
-                loss = criterion(x_recon, x) + criterion(m_recon, m)
+                gene_loss = criterion(x_recon, x)
+                morpho_loss = criterion(m_recon, m)
+                loss = gene_loss + morpho_loss
+
                 avg_loss += loss.item()
+                avg_gene_loss += gene_loss.item()
+                avg_morpho_loss += morpho_loss.item()
+
                 loss.backward()
                 optimizer.step()
 
@@ -485,14 +512,14 @@ class Steamboat(nn.Module):
             else:
                 cnt = 0
             if report_per >= 0 and cnt >= stop_tol:
-                print(f"Epoch {epoch + 1}: train_loss {avg_loss:.5f}")
+                print(f"Epoch {epoch + 1}: gene_loss =  {avg_gene_loss:.5f}, morpho_loss =  {avg_morpho_loss:.5f}")
                 print(f"Stopping criterion met.")
                 break
             elif report_per > 0 and (epoch % report_per) == 0:
-                print(f"Epoch {epoch + 1}: train_loss {avg_loss:.5f}")
+                print(f"Epoch {epoch + 1}: gene_loss =  {avg_gene_loss:.5f}, morpho_loss =  {avg_morpho_loss:.5f}")
             best_loss = min(best_loss, avg_loss)
         else:
-            print(f"Maximum iterations reached. Final Loss = {avg_loss:.5f}")
+            print(f"Maximum iterations reached. Final Loss: gene_loss =  {avg_gene_loss:.5f}, morpho_loss =  {avg_morpho_loss:.5f}")
             
         self.eval()
         return self
