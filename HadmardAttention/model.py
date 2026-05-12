@@ -341,18 +341,8 @@ class HadmardAttention(nn.Module):
         normalization_factor = sum_score.sum(axis=-1, keepdim=True) + 1e-9 # n * 1
         sum_attn = sum_score / normalization_factor
         
-        #res_m = self.v_m(sum_attn)
         res_g = self.v_g(sum_attn)
-        
-        #self.q_emb_m = q_emb_m
-        #self.q_emb_g = q_emb_g
-
-        #self.k_emb_m = k_emb_m
-        #self.k_emb_g = k_emb_g
-        
-        #self.k_local_emb_m = k_local_emb_m
-        #self.k_local_emb_g = k_local_emb_g
-        
+                
         ego_score = sum_ego_score
 
         if get_details:
@@ -362,14 +352,12 @@ class HadmardAttention(nn.Module):
             ego_attnm = ego_attnp
             local_attnm = local_attnp.sum(axis=-1)
 
-            #return res_m, res_g, {
             return res_g, {
                 'attn': sum_attn,
                 'attnp': (ego_attnp, local_attnp),
                 'attnm': (ego_attnm, local_attnm)
                 }
         else:
-            #return res_m, res_g
             return res_g
 
     

@@ -1,3 +1,3 @@
-from .model import Steamboat
-from .dataset import prep_adatas, make_dataset
+from .model import SpatialTransformerAE, fit
+from .dataset import prep_adata, build_graph
 from .utils import set_random_seed
