@@ -323,7 +323,7 @@ class Steamboat(nn.Module):
             loss_fun=None,
             sched = None, max_lr = None,
             max_epoch: int = 100, stop_eps: float = 1e-4, stop_tol: int = 10, 
-            log_dir: str = 'log/', report_per: int = 10):
+            log_dir: str = 'log/', report_per: int = 10, return_loss=False):
         """Create a PyTorch Dataset from a list of adata
 
         :param dataset: Dataset to be trained on
@@ -435,7 +435,10 @@ class Steamboat(nn.Module):
             logger.info(f"Maximum iterations reached.")
             
         self.eval()
-        return self
+        if return_loss:
+            return avg_loss
+        else:
+            return self
 
     def transform(self, x, adj_matrix):
         self.eval()

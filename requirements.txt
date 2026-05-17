@@ -1,0 +1,31 @@
+# requirements.txt
+# HPC:
+# module load release/24.10  GCC/13.2.0  OpenMPI/4.1.6 GDAL/3.9.0 Python/3.11.5
+# Install with: pip install --no-cache-dir -r requirements.txt
+
+# Core scientific stack
+numpy>=1.26,<2.0
+scipy>=1.13
+pandas>=2.2
+
+# Deep learning (CUDA-enabled)
+# For CUDA 13.0:
+# pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu130
+
+
+# Single-cell analysis
+geopandas==1.1.1
+anndata==0.12.2 
+scanpy==1.11.4
+squidpy==1.6.5
+
+# ML utilities
+scikit-learn>=1.5
+
+# Progress bars
+tqdm>=4.66
+
+# Visualization
+matplotlib>=3.9
+seaborn>=0.13
+

@@ -67,7 +67,7 @@ def prep_adatas(adatas: list[sc.AnnData], n_neighs: int = 8, norm=True, log1p=Tr
             sq.gr.spatial_neighbors(adata, n_neighs=n_neighs)
     return adatas
 
-def make_dataset(adatas: list[sc.AnnData], sparse_graph=True, mask_var: str = None, obsm_key = None,
+def make_dataset(adatas: list[sc.AnnData], sparse_graph=True, mask_var=False, obsm_key = None,
                  regional_obs: str | list[str] = None) -> SteamboatDataset:
     """Create a PyTorch Dataset from a list of adata
     The input data should be a list of AnnData that contains 1. raw counts or normalized counts

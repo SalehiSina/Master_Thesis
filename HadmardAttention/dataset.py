@@ -47,7 +47,7 @@ def prep_adatas(adata: sc.AnnData, n_neighs: int = 8, norm=True, log1p=True, sca
     
     return adata
 
-def make_dataset(adata: sc.AnnData, sparse_graph=True, mask_var: str = None, obsm_key = None) -> SteamboatDataset:
+def make_dataset(adata: sc.AnnData, sparse_graph=True, mask_var=False, obsm_key = None) -> SteamboatDataset:
     """Create a PyTorch Dataset from a list of adata
     The input data should be a list of AnnData that contains 1. raw counts or normalized counts
     :param adatas: A list of `SCANPY AnnData`

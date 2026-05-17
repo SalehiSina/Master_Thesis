@@ -401,7 +401,7 @@ class Steamboat(nn.Module):
             loss_fun=None,
             sched = None, max_lr = None,
             max_epoch: int = 100, stop_eps: float = 1e-4, stop_tol: int = 10, 
-            report_per: int = 10):
+            report_per: int = 10, return_loss=False):
 
         print("This is the new version")
         """Create a PyTorch Dataset from a list of adata
@@ -499,4 +499,7 @@ class Steamboat(nn.Module):
             print(f"Maximum iterations reached. Final Loss:  {avg_loss:.5f}")
             
         self.eval()
-        return self
+        if return_loss:
+            return avg_loss
+        else:
+            return self
