@@ -204,3 +204,7 @@ SteamBoat/steamboat/__pycache__/utils.cpython-311.pyc
 SteamBoat/steamboat/__pycache__/model.cpython-311.pyc
 SteamBoat/steamboat/__pycache__/dataset.cpython-311.pyc
 SteamBoat/steamboat/__pycache__/__init__.cpython-311.pyc
+GNN/__pycache__/__init__.cpython-311.pyc
+GNN/__pycache__/dataset.cpython-311.pyc
+GNN/__pycache__/model.cpython-311.pyc
+GNN/__pycache__/utils.cpython-311.pyc

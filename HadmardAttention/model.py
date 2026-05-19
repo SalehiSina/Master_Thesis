@@ -311,10 +311,10 @@ class HadmardAttention(nn.Module):
                 print("model_type: ", model_type)
                 self.print_flag = True
             
-            local_score = torch.concatenate((local_score_mg, local_score_gg), axis=-2)
+            local_score = torch.concatenate((local_score_mm, local_score_mm), axis=-2)
             
-            sum_local_score = torch.concatenate((sum_local_score_mg, sum_local_score_gg), axis=-1)
-            sum_ego_score = torch.concatenate((ego_score_m, ego_score_gm) , axis=-1)
+            sum_local_score = torch.concatenate((sum_local_score_mm, sum_local_score_mm), axis=-1)
+            sum_ego_score = torch.concatenate((ego_score_m, ego_score_m) , axis=-1)
 
         elif model_type == 5:
 
