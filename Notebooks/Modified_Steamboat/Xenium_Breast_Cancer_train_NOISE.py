@@ -6,16 +6,17 @@ import scanpy as sc
 import csv
 import os
 import sys
+import numpy as np
 from filelock import FileLock
 
 sys.path.append("./")
-import HadmardAttention as HA
+import Modified_Steamboat as MS
 
 if torch.cuda.is_available():
     device = "cuda"
     print("GPU: ",torch.cuda.get_device_name(0))
 
-model_name = "Hadamard_Full"
+model_name = "Modified_Steamboat_2"
 
 ###################################
 # Parse arguments
@@ -35,9 +36,14 @@ MaskingRate = mask_rate
 ###################################
 # Data
 ###################################
-adata = sc.read_h5ad("/data/horse/ws/mosa505e-Multimodal_Rep/data/Breast_Cancer/FMs_3/hoptimus_adata.h5ad")
-adata = HA.prep_adatas(adata, norm=True, log1p=True)
-dataset = HA.make_dataset(adata, sparse_graph=True)
+rng = np.random.default_rng(42)
+adata = sc.read_h5ad("/data/horse/ws/mosa505e-Multimodal_Rep/data/Breast_Cancer/ann_data.h5ad")
+ad = adata.copy()
+ad.obsm["morpho"] = rng.standard_normal((167780, 500))
+adata.obsm['p_Morpho_Embedding'] = ad.obsm['morpho'] - np.min(ad.obsm['morpho'])
+
+adata = MS.prep_adatas(adata, norm=True, log1p=True)
+dataset = MS.make_dataset(adata, sparse_graph=True)
 
 
 ###################################
@@ -45,11 +51,11 @@ dataset = HA.make_dataset(adata, sparse_graph=True)
 ###################################
 model_type = 0
 
-HA.set_random_seed(seed*10)
-model = HA.model.Steamboat(
+MS.set_random_seed(seed*10)
+model = MS.model.Steamboat(
     features=len(adata.var_names.tolist()), 
     morpho_features=adata.obsm['p_Morpho_Embedding'].shape[1], 
-    n_heads=32, model_type=model_type, 
+    n_heads=64, model_type=model_type, 
     n_scales=2
     )
 model = model.to(device)
@@ -66,8 +72,8 @@ loss = model.fit(dataset, entry_masking_rate=MaskingRate,
 # CSV File
 ###################################
 
-csv_file = "results_h_optimus.csv"
-lock = FileLock("results_h_optimus.csv.lock")
+csv_file = "results_NOISE.csv"
+lock = FileLock("results_NOISE.csv.lock")
 
 ###################################
 # prevent simultaneous writes

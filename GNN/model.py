@@ -25,7 +25,7 @@ def loss_fn(pred, target, gene_dim):
     return F.mse_loss(pred, target[:, :gene_dim])
 
 
-### V1: sparse message passing 
+### V1,2: sparse message passing 
 class SpatialTransformerLayer(nn.Module):
     def __init__(self, dim, heads=4):
         super().__init__()
@@ -73,7 +73,7 @@ class SpatialTransformerLayer(nn.Module):
         return out
 
 """
-### V2: using MultiheadAttention in Pytorch (Claude Code)
+### V3: using MultiheadAttention in Pytorch (Claude Code)
 
 class SpatialTransformerLayer(nn.Module):
     def __init__(self, dim, heads=4):

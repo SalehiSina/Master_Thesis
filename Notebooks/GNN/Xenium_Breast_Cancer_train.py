@@ -15,7 +15,7 @@ if torch.cuda.is_available():
     device = "cuda"
     print("GPU: ",torch.cuda.get_device_name(0))
 
-model_name = "GNN_V1"
+model_name = "GNN_V2" # V1: latent space 32 , V2: latent space 64
 
 ###################################
 # Parse arguments
@@ -48,7 +48,7 @@ model = SA.SpatialTransformerAE(
     in_dim=data.x.shape[1],
     gene_dim=data.gene_dim,
     hidden_dim=96,
-    latent_dim=32,
+    latent_dim=64,
     heads=4
 )
 
