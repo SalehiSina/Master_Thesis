@@ -8,6 +8,7 @@ import os
 import sys
 from filelock import FileLock
 
+os.chdir("/content/drive/MyDrive/Thesis/Projects/Master_Thesis")
 sys.path.append("./")
 import HadmardAttention as HA
 
@@ -35,7 +36,8 @@ MaskingRate = mask_rate
 ###################################
 # Data
 ###################################
-adata = sc.read_h5ad("/data/horse/ws/mosa505e-Multimodal_Rep/data/Breast_Cancer/FMs_3/UNI_adata.h5ad")
+adata = sc.read_h5ad("/content/drive/MyDrive/Thesis/Projects/Data/Breast_Cancer/FMs_3/UNI_adata.h5ad")
+#adata = sc.read_h5ad("/data/horse/ws/mosa505e-Multimodal_Rep/data/Breast_Cancer/FMs_3/UNI_adata.h5ad")
 adata = HA.prep_adatas(adata, norm=True, log1p=True)
 dataset = HA.make_dataset(adata, sparse_graph=True)
 
@@ -62,7 +64,18 @@ loss = model.fit(dataset, entry_masking_rate=MaskingRate,
           max_lr=None, opt_args=dict(lr=0.01), stop_eps=1e-7, 
           report_per=200, stop_tol=200, return_loss=True)
 
-os.makedirs("Notebooks/Hadmard_Attention/saved_models", exist_ok=True)
-torch.save(model.state_dict(), f'Notebooks/Hadmard_Attention/saved_models/breast_cancer_32_UNI_{model_type}_MR_{MaskingRate}.pth')
+save_dir = "/content/drive/MyDrive/Thesis/Projects/Master_Thesis/Notebooks/Modified_Steamboat/saved_models"
+
+os.makedirs(
+  save_dir,
+  exist_ok=True
+)
+
+torch.save(
+  model.state_dict(),
+  os.path.join(save_dir,f'MR_{MaskingRate}_Seed_{seed}.pth')
+)
+#os.makedirs("Notebooks/Hadmard_Attention/saved_models", exist_ok=True)
+#torch.save(model.state_dict(), f'Notebooks/Hadmard_Attention/saved_models/breast_cancer_32_UNI_{model_type}_MR_{MaskingRate}.pth')
 
 print(f"MR {MaskingRate} RUN {seed}: loss={loss}")

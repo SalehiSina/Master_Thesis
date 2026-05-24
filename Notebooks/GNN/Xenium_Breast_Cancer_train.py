@@ -8,6 +8,7 @@ import os
 import sys
 from filelock import FileLock
 
+os.chdir("/content/drive/MyDrive/Thesis/Projects/Master_Thesis")
 sys.path.append("./")
 import GNN as SA
 
@@ -15,7 +16,7 @@ if torch.cuda.is_available():
     device = "cuda"
     print("GPU: ",torch.cuda.get_device_name(0))
 
-model_name = "GNN_V2" # V1: latent space 32 , V2: latent space 64
+model_name = "GNN_V2_gene" # V1: latent space 32 , V2: latent space 64
 
 ###################################
 # Parse arguments
@@ -35,7 +36,8 @@ MaskingRate = mask_rate
 ###################################
 # Data
 ###################################
-adata = sc.read_h5ad("/data/horse/ws/mosa505e-Multimodal_Rep/data/Breast_Cancer/FMs_3/UNI_adata.h5ad")
+adata = sc.read_h5ad("/content/drive/MyDrive/Thesis/Projects/Data/Breast_Cancer/FMs_3/UNI_adata.h5ad")
+#adata = sc.read_h5ad("/data/horse/ws/mosa505e-Multimodal_Rep/data/Breast_Cancer/FMs_3/UNI_adata.h5ad")
 
 adata = SA.prep_adata(adata, norm=True, log1p=True)
 data = SA.build_graph(adata, k=8, morph_key='p_Morpho_Embedding')
@@ -60,6 +62,19 @@ loss = SA.model.fit(
     device=device, return_loss=True
     )
 
+save_dir = "/content/drive/MyDrive/Thesis/Projects/Master_Thesis/Notebooks/GNN/saved_models"
+
+os.makedirs(
+  save_dir,
+  exist_ok=True
+)
+
+torch.save(
+  model.state_dict(),
+  os.path.join(save_dir,f'MI_MR_{MaskingRate}_Seed_{seed}.pth')
+)
+
+"""
 ###################################
 # CSV File
 ###################################
@@ -80,5 +95,5 @@ with lock:
             writer.writerow(["Model_Name", "MaskingRate", "run_id", "loss"])
 
         writer.writerow([model_name, MaskingRate, seed, loss])
-
+"""
 print(f"MR {MaskingRate} RUN {seed}: loss={loss}")

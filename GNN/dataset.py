@@ -24,6 +24,7 @@ def build_graph(adata, k=8, coord_key="spatial", gene_key="X", morph_key="morph_
     morph = adata.obsm[morph_key]
 
     x = np.concatenate([gene, morph], axis=1)
+    #x = gene
     x = torch.tensor(x, dtype=torch.float32)
 
     coords = adata.obsm[coord_key]

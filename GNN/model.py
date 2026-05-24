@@ -199,7 +199,7 @@ def fit(model, data,
         loss.backward()
         optimizer.step()
 
-        if epoch % 10 == 0:
+        if epoch % 1000 == 0:
             print(f"Epoch {epoch} | Loss: {loss.item():.4f}")
             print(f"Best : {best_loss:.4f}")
         
