@@ -229,3 +229,11 @@ Notebooks/Modified_Steamboat/saved_models/MR_0.9_Seed_0.pth
 Notebooks/Modified_Steamboat/saved_models/MR_0.1_Seed_0.pth
 GNN/__pycache__/dataset.cpython-312.pyc
 GNN/__pycache__/model.cpython-312.pyc
+Gene_Predictor/__pycache__/__init__.cpython-311.pyc
+Gene_Predictor/__pycache__/dataset.cpython-311.pyc
+Gene_Predictor/__pycache__/model.cpython-311.pyc
+Gene_Predictor/__pycache__/utils.cpython-311.pyc
+GNN_Cross/__pycache__/__init__.cpython-311.pyc
+GNN_Cross/__pycache__/dataset.cpython-311.pyc
+GNN_Cross/__pycache__/model.cpython-311.pyc
+GNN_Cross/__pycache__/utils.cpython-311.pyc
