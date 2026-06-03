@@ -37,6 +37,6 @@ echo "SEED         = $SEED"
 # -----------------------------------
 # Launch training
 # -----------------------------------
-python Notebooks/Modified_Steamboat/Xenium_Breast_Cancer_train_save.py \
+python Train/Modified_Steamboat/Xenium_Breast_Cancer_train_save.py \
     --mask_rate $MASK_RATE \
     --seed $SEED

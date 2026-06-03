@@ -36,6 +36,6 @@ echo "SEED         = $SEED"
 # -----------------------------------
 # Launch training
 # -----------------------------------
-python Notebooks/Gene_Predictor/Xenium_Breast_Cancer_train.py \
+python Train/Gene_Predictor/Xenium_Breast_Cancer_train.py \
     --mask_rate $MASK_RATE \
     --seed $SEED
