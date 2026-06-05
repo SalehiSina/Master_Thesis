@@ -54,7 +54,7 @@ def fit(
     stop_eps=1e-7,
     stop_tol=20,
     batch_size=None,
-    device="cpu",
+    device="cuda",
     return_loss=False,
 ):
 
@@ -65,7 +65,8 @@ def fit(
     dataloader = DataLoader(
         dataset,
         batch_size=batch_size,
-        shuffle=False,
+        pin_memory=True,
+        shuffle=True,
     )
 
     model = model.to(device)

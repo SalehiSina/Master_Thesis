@@ -26,6 +26,7 @@ class AEDataset(Dataset):
         self.gene_vectors = []
         self.morph_key = morph_key
         self.morph_vectors = []
+        self.X = []
 
         for i in range(adata.shape[0]):
             gene_vector = adata.X[i].toarray().squeeze() if not isinstance(adata.X, np.ndarray) else adata.X[i]
@@ -35,10 +36,13 @@ class AEDataset(Dataset):
                 morph_vector = adata.obsm[morph_key][i]
             self.gene_vectors.append(gene_vector)
             self.morph_vectors.append(morph_vector)
+            
+        for gene_vector, morph_vector in zip(self.gene_vectors, self.morph_vectors):
+            self.X.append(np.concatenate([gene_vector, morph_vector]))
 
     def __len__(self):
         return len(self.gene_vectors)
 
     def __getitem__(self, index):
-        return np.concatenate([self.gene_vectors[index], self.morph_vectors[index]])
+        return self.X[index]
 
