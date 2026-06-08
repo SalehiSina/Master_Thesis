@@ -235,7 +235,8 @@ class BilinearAttention(nn.Module):
         # Normalize attention scores
         sum_local_score = torch.sum(local_score, dim=-1)
         sum_regional_scores = [torch.sum(regional_score, dim=-1) for regional_score in regional_scores]
-        sum_score = ego_score + sum_local_score + sum(sum_regional_scores) # n * h
+        #sum_score = ego_score + sum_local_score + sum(sum_regional_scores) # n * h
+        sum_score = sum_local_score
         normalization_factor = sum_score.sum(axis=-1, keepdim=True) + 1e-9 # n * 1
 
         sum_attn = sum_score / normalization_factor

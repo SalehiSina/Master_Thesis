@@ -12,14 +12,14 @@
 #SBATCH --output=HPC_logs/out_%A_%a.txt
 #SBATCH --error=HPC_logs/err_%A_%a.txt
 
-# 55 total jobs, max 5 simultaneously
-#SBATCH --array=0-1%5
+# 10 total jobs, max 5 simultaneously
+#SBATCH --array=0-10%5
 
 
 # -----------------------------------
 # parameters
 # -----------------------------------
-MASKING_RATES=(0.8 0.4)
+MASKING_RATES=(0.9 0.8 0.7 0.6 0.5 0.4 0.3 0.2 0.1 0.0)
 NUM_REPEATS=1
 
 TASK_ID=$SLURM_ARRAY_TASK_ID
@@ -37,6 +37,6 @@ echo "SEED         = $SEED"
 # -----------------------------------
 # Launch training
 # -----------------------------------
-python Train/Modified_Steamboat/Xenium_Breast_Cancer_train_save.py \
+python Train/Modified_Steamboat/Xenium_Breast_Cancer_train.py \
     --mask_rate $MASK_RATE \
     --seed $SEED
