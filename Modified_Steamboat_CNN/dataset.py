@@ -16,10 +16,8 @@ import os
 # Default image transform
 # ─────────────────────────────────────────────
 base_transform = transforms.Compose([
-    transforms.Resize((224, 224)),
+    transforms.CenterCrop(64),
     transforms.ToTensor(),
-    transforms.Normalize(mean=[0.485, 0.456, 0.406],
-                         std=[0.229, 0.224, 0.225]),
 ])
 
 
@@ -43,13 +41,6 @@ class M_SteamboatDataset(Dataset):
       tensor for fast serialisation.  If the full matrix is too large for RAM you
       can replace it with a memory-mapped numpy array or an HDF5 handle.
 
-    • Images are loaded lazily (on __getitem__) so the dataset object stays small
-      and multiple DataLoader workers don't share open file handles.
-
-    • The adjacency tensor keeps the same format as the original code (either a
-      [2, N*k] COO tensor for regular k-NN graphs or a [3, N*max_k] padded tensor
-      with a validity mask for irregular graphs).  We slice out only the rows
-      belonging to the requested cell so the DataLoader can collate them.
     """
 
     def __init__(
@@ -63,9 +54,13 @@ class M_SteamboatDataset(Dataset):
         super().__init__()
         self.data             = data            # list of per-cell dicts
         self.X_global         = X_global        # shared; never copied per sample
-        self.cell_image_paths = cell_image_paths
         self.sparse_graph     = sparse_graph
         self.transform        = transform
+
+        self.images = []
+        for img_path in tqdm(cell_image_paths, desc="Preloading images"):
+            self.images.append(self._load_image(img_path))
+        
 
     # ------------------------------------------------------------------
     def __len__(self):
@@ -84,9 +79,8 @@ class M_SteamboatDataset(Dataset):
         # X_local here and passing X_global separately as a collate hook.
         X_global = self.X_global        # [N, n_genes]
 
-        # ── 3. Morphology image from disk ────────────────────────────
-        img_path = self.cell_image_paths[index]
-        image = self._load_image(img_path)  # [C, H, W]
+        # ── 3. Morphology image ────────────────────────────
+        image = self.images[index]  # [C, H, W]
 
         # ── 4. Adjacency (neighbours of this cell only) ───────────────
         adj = sample['adj']             # pre-sliced in make_dataset
@@ -107,13 +101,13 @@ class M_SteamboatDataset(Dataset):
         """Load a single cell image; fall back to a zero tensor on error."""
         try:
             img = Image.open(path).convert('RGB')
-            if self.transform:
-                return self.transform(img)
-            return transforms.ToTensor()(img)
+            
+            return self.transform(img)
+        
         except Exception as e:
             print(f"[M_SteamboatDataset] Warning: could not load image at '{path}': {e}")
             # Return a black image of the expected size so the batch can still collate
-            return torch.zeros(3, 224, 224)
+            return torch.zeros(3, 64, 64)
 
 
 # ─────────────────────────────────────────────
@@ -147,10 +141,8 @@ def prep_adatas(
 def make_dataset(
     adata: sc.AnnData,
     image_dir: str,
-    image_col: str = 'image_id',   # adata.obs column that holds the image filename
     image_ext: str = '.png',       # extension to append if not already in image_col
     sparse_graph: bool = True,
-    mask_var=False,
     obsm_key=None,
     transform=base_transform,
 ) -> M_SteamboatDataset:
@@ -169,18 +161,6 @@ def make_dataset(
     transform   : torchvision transform applied to each image
     """
 
-    # ── Variable masking (HVG) ───────────────────────────────────────
-    if mask_var is None:
-        if 'highly_variable' in adata.var.columns:
-            print("Using 'highly_variable' to mask variables. "
-                  "Pass mask_var=False to use all genes.")
-            mask_var = 'highly_variable'
-        else:
-            mask_var = False
-
-    if mask_var:
-        assert mask_var in adata.var.columns, \
-            f"adata does not have '{mask_var}' in .var"
 
     # ── Expression matrices ───────────────────────────────────────────
     if obsm_key is None:
@@ -245,13 +225,12 @@ def make_dataset(
 
     # ── Image paths ───────────────────────────────────────────────────
     # Build the path list here so __getitem__ only calls os.path.join
-    def _image_path(obs_row):
-        fname = str(obs_row[image_col])
-        if not fname.endswith(image_ext):
-            fname = fname + image_ext
+    def _image_path(cell_id):
+        fname = cell_id + image_ext
+
         return os.path.join(image_dir, fname)
 
-    cell_image_paths = [_image_path(adata.obs.iloc[i]) for i in range(N)]
+    cell_image_paths = [_image_path(adata.obs['cell_id'][i]) for i in range(N)]
 
     # ── Per-cell data dicts ───────────────────────────────────────────
     data_list = []
@@ -259,7 +238,7 @@ def make_dataset(
         cell = {}
 
         # Local expression vector
-        cell['X'] = X_global[i]       # [n_genes]  — view into X_global
+        cell['X'] = X_global[i]      # [n_genes]  — view into X_global
 
         # Adjacency slice for this cell
         if adj_type == 'regular':
