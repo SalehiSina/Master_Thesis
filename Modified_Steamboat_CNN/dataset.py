@@ -47,6 +47,7 @@ class M_SteamboatDataset(Dataset):
         self,
         data: list[dict],          # list with one dict per cell (see make_dataset)
         X_global: torch.Tensor,    # [N, n_genes]  — full expression matrix
+        M_global: torch.Tensor,    # [N, n_morpho]  — full morphology matrix
         cell_image_paths: list[str],  # length-N list of absolute image paths
         sparse_graph: bool = True,
         transform=base_transform,
@@ -54,6 +55,7 @@ class M_SteamboatDataset(Dataset):
         super().__init__()
         self.data             = data            # list of per-cell dicts
         self.X_global         = X_global        # shared; never copied per sample
+        self.M_global         = M_global        # shared; never copied per sample
         self.sparse_graph     = sparse_graph
         self.transform        = transform
 
@@ -86,14 +88,22 @@ class M_SteamboatDataset(Dataset):
         adj = sample['adj']             # pre-sliced in make_dataset
 
         # ── 5. Cell index (useful for downstream look-ups) ────────────
-        cell_idx = torch.tensor(index, dtype=torch.long)
+        #cell_idx = torch.tensor(index+1, dtype=torch.long)
+        cell_id = sample['id']
+
+        # ── 6. Morphological features ────────────────────────────
+        M_global = self.M_global        # [N, n_morpho]
+        M_local = sample['M']           # [n_morpho]
 
         return {
             'X_local':  X_local,    # [n_genes]
             'X_global': X_global,   # [N, n_genes]  ← global context
+            'M_local':  M_local,    # [n_morpho]
+            'M_global': M_global,   # [N, n_morpho]
             'image':    image,      # [C, H, W]
             'adj':      adj,        # neighbour indices/mask
-            'cell_idx': cell_idx,   # scalar
+            #'cell_idx': cell_idx,   # scalar
+            'cell_id':  cell_id,
         }
 
     # ------------------------------------------------------------------
@@ -152,16 +162,13 @@ def make_dataset(
     Parameters
     ----------
     adata       : preprocessed AnnData (output of prep_adatas)
-    image_dir   : directory that contains per-cell images
-    image_col   : column in adata.obs with the image filename (stem or full name)
     image_ext   : extension appended when image_col contains only the stem
     sparse_graph: whether to return COO adjacency (True) or dense bool (False)
     mask_var    : obs column to subset genes, or False to use all
     obsm_key    : tuple (X_key, Morpho_key) to read from obsm instead of .X
     transform   : torchvision transform applied to each image
     """
-
-
+    print("Building dataset")
     # ── Expression matrices ───────────────────────────────────────────
     if obsm_key is None:
         X_raw = adata.X
@@ -176,6 +183,19 @@ def make_dataset(
 
     # X_global: shared tensor over ALL cells — the key change for req. 1
     X_global = torch.from_numpy(X_np)               # [N, n_genes]
+
+    # ── Morphological matrices ───────────────────────────────────────────
+    M_raw = adata.obsm['p_Morpho_Embedding']
+
+    # Convert full matrix to float32 numpy once
+    if isinstance(M_raw, sp.sparse.spmatrix):
+        M_np = M_raw.astype(np.float32).toarray()   # [N, n_morpho]
+    else:
+        M_np = np.asarray(M_raw, dtype=np.float32)  # [N, n_morpho]
+
+    # M_global: shared tensor over ALL cells — the key change for req. 1
+    M_global = torch.from_numpy(M_np)               # [N, n_morpho] 
+
 
     # ── Spatial graph  (built once; then sliced per cell below) ──────
     N = adata.shape[0]
@@ -224,22 +244,22 @@ def make_dataset(
         adj_type     = 'dense'
 
     # ── Image paths ───────────────────────────────────────────────────
-    # Build the path list here so __getitem__ only calls os.path.join
-    def _image_path(cell_id):
-        fname = cell_id + image_ext
+    def _image_path(cid):
 
+        fname = str(cid) + image_ext
         return os.path.join(image_dir, fname)
 
-    cell_image_paths = [_image_path(adata.obs['cell_id'][i]) for i in range(N)]
+    cell_image_paths = [_image_path(cid) for cid in adata.obs['cell_id']]
 
     # ── Per-cell data dicts ───────────────────────────────────────────
     data_list = []
     for i in range(N):
         cell = {}
 
+        cell['id'] = adata.obs['cell_id'][i]
         # Local expression vector
         cell['X'] = X_global[i]      # [n_genes]  — view into X_global
-
+        cell['M'] = M_global[i]      # [n_morpho] — view into M_global
         # Adjacency slice for this cell
         if adj_type == 'regular':
             # neighbours: shape [k]
@@ -258,6 +278,7 @@ def make_dataset(
     return M_SteamboatDataset(
         data=data_list,
         X_global=X_global,
+        M_global=M_global,
         cell_image_paths=cell_image_paths,
         sparse_graph=sparse_graph,
         transform=transform,
