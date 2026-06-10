@@ -336,7 +336,7 @@ class Steamboat(nn.Module):
                 loss.backward()
                 optimizer.step()
 
-            avg_loss /= len(dataloader.dataset)
+            avg_loss /= (len(dataloader.dataset)*dataloader.dataset[0]['X_global'].shape[1])
 
             if best_loss - avg_loss < stop_eps:
                 cnt += 1

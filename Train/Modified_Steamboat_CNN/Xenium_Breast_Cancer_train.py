@@ -39,16 +39,24 @@ MaskingRate = mask_rate
 ###################################
 # Data
 ###################################
-adata = sc.read_h5ad("/data/horse/ws/mosa505e-Multimodal_Rep/data/Breast_Cancer/FMs_3/hoptimus_adata_r.h5ad")
+ad = sc.read_h5ad("/data/horse/ws/mosa505e-Multimodal_Rep/data/Breast_Cancer/FMs_3/hoptimus_adata_r.h5ad")
+#adata = ad[:1000].copy()
+adata = ad.copy()
+
+print("number of cells: ", adata.n_obs)
+print("number of genes: ", adata.n_vars)
+
 adata = MSC.prep_adatas(adata, norm=True, log1p=True)
 img_dir = '/data/horse/ws/mosa505e-Multimodal_Rep/data/Breast_Cancer/extracted_images'
 dataset = MSC.make_dataset(adata, image_dir = img_dir, image_ext ='.png', sparse_graph=True)
 
 dataloader = DataLoader(
     dataset=dataset,
-    batch_size=512,
-    shuffle=False,
+    batch_size=1024,
+    shuffle=True,
 )
+
+print(len(dataloader.dataset)*dataloader.dataset[0]['X_global'].shape[1])
 
 ###################################
 # Train
@@ -65,10 +73,10 @@ model = model.to(device)
 
 loss = model.fit(
     dataloader, 
-    entry_masking_rate=1.0,
+    entry_masking_rate=mask_rate,
     device=device,
     max_epoch=10000,
-    loss_fun=torch.nn.MSELoss(reduction='mean'),
+    loss_fun=torch.nn.MSELoss(reduction='sum'),
     opt=torch.optim.Adam,
     opt_args=dict(lr=0.01),
     stop_eps=1e-7, report_per=200, stop_tol=200, 

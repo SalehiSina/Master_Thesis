@@ -256,7 +256,7 @@ def make_dataset(
     for i in range(N):
         cell = {}
 
-        cell['id'] = adata.obs['cell_id'][i]
+        cell['id'] = adata.obs['cell_id'].iloc[i]
         # Local expression vector
         cell['X'] = X_global[i]      # [n_genes]  — view into X_global
         cell['M'] = M_global[i]      # [n_morpho] — view into M_global
