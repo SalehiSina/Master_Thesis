@@ -4,6 +4,8 @@ from torch import nn
 from torch import optim
 from torch.utils.data import DataLoader
 from .dataset import M_SteamboatDataset
+from tqdm import tqdm
+
 import os
 
 class Encoder(nn.Module):
@@ -14,6 +16,7 @@ class Encoder(nn.Module):
         self.network = nn.Sequential(
             nn.Linear(input_dim, hidden_dim1, bias=False),
             nn.Linear(hidden_dim1, output_dim, bias=False),
+            nn.BatchNorm1d(output_dim),
             nn.ReLU()
         )
 
@@ -26,13 +29,10 @@ class imgEncoder(nn.Module):
 
         self.conv_layer = nn.Sequential(
             nn.Conv2d(3, base_channel, kernel_size=3, padding='same', bias=False),
-            nn.ReLU(),
             nn.BatchNorm2d(base_channel),
-            nn.Conv2d(base_channel, base_channel*2, kernel_size=3, padding='same', bias=False),
             nn.ReLU(),
-            nn.BatchNorm2d(base_channel*2),
         )
-        self.fc = nn.Linear(base_channel*2*input_dim[1]*input_dim[2], output_dim, bias=False)
+        self.fc = nn.Linear(base_channel*input_dim[1]*input_dim[2], output_dim, bias=False)
 
     def forward(self, x):
         x = self.conv_layer(x)
@@ -311,18 +311,19 @@ class Steamboat(nn.Module):
 
         cnt = 0
         best_loss = np.inf
-        for epoch in range(max_epoch):
+        
+        for epoch in tqdm(range(max_epoch)):
 
             avg_loss = 0.
 
             for sample in dataloader:
-
+            #for sample in tqdm(dataloader, desc="Epoch %d/%d" % (epoch+1, max_epoch)):
                 # Send everything to required device
                 adj = sample['adj'].to(device)
                 x = sample['X_local'].to(device)
                 image = sample['image'].to(device)
-                global_x = sample['X_global'][0].to(device)
-                global_m = sample['M_global'][0].to(device)
+                global_x = dataloader.dataset.X_global.to(device)
+                global_m = dataloader.dataset.M_global.to(device)
 
                 masked_x = self.masking(x, entry_masking_rate)
                 global_masked_x = self.masking(global_x, entry_masking_rate)
@@ -336,7 +337,7 @@ class Steamboat(nn.Module):
                 loss.backward()
                 optimizer.step()
 
-            avg_loss /= (len(dataloader.dataset)*dataloader.dataset[0]['X_global'].shape[1])
+            avg_loss /= (len(dataloader.dataset)*dataloader.dataset.X_global.shape[1])
 
             if best_loss - avg_loss < stop_eps:
                 cnt += 1

@@ -2,24 +2,24 @@
 # ^Batch script starts with shebang line
 
 #SBATCH --nodes=1                               #
-#SBATCH --cpus-per-task=4                       #
+#SBATCH --cpus-per-task=1                       #
 #SBATCH --gres=gpu:1                            #
-#SBATCH --time=3:30:00                          #
-#SBATCH --account=p_scads_celltracking          #
-#SBATCH --job-name=train_array                  #
+#SBATCH --time=01:00:00                         #
+#SBATCH --account=mobil-08                      #
+#SBATCH --job-name=Ms_arr                  #
 #SBATCH --mem=8G
 
-#SBATCH --output=HPC_logs/out_%A_%a.txt
-#SBATCH --error=HPC_logs/err_%A_%a.txt
+#SBATCH --output=HPC_logs_2/out_%A_%a.txt
+#SBATCH --error=HPC_logs_2/err_%A_%a.txt
 
-# 10 total jobs, max 5 simultaneously
-#SBATCH --array=0-10%5
+# 6 total jobs, max 6 simultaneously
+#SBATCH --array=0-5%6
 
 
 # -----------------------------------
 # parameters
 # -----------------------------------
-MASKING_RATES=(0.9 0.8 0.7 0.6 0.5 0.4 0.3 0.2 0.1 0.0)
+MASKING_RATES=(0.9 0.8 0.3 0.2 0.1 0.0)
 NUM_REPEATS=1
 
 TASK_ID=$SLURM_ARRAY_TASK_ID

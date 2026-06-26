@@ -7,32 +7,52 @@ from .utils import _get_logger
 from .dataset import SteamboatDataset
 import os
 from typing import Literal
+from tqdm import tqdm
+
+class Gene_Encoder(nn.Module):
+    def __init__(self, input_dim, output_dim, bias=False):
+        super().__init__()
+        
+        self.network = nn.Sequential(
+            nn.Linear(input_dim, output_dim, bias=bias),
+            nn.ReLU(),
+        )
+
+    def forward(self, x):
+        return self.network(x)
+
 
 class NonNegLinear(nn.Module):
-    def __init__(self, d_in, d_out, bias) -> None:
-        """Nonegative linear layer
+    def __init__(self, d_in, d_out, bias=True) -> None:
+        """Nonnegative linear layer
 
         :param d_in: number of input features
         :param d_out: number of output features
-        :param bias: umimplemented
-        :raises NotImplementedError: when bias is True
+        :param bias: if True, adds a learnable (unconstrained) bias term
         """
         super().__init__()
         self._weight = torch.nn.Parameter(torch.randn(d_out, d_in) - 3)
         self.elu = nn.ELU()
+
         if bias:
-            raise NotImplementedError()
+            self.bias = torch.nn.Parameter(torch.zeros(d_out))
+        else:
+            self.register_parameter("bias", None)
 
     @property
     def weight(self):
-        """transform weight matrix to be non-negative
+        """transform weight matrix to be non-negative 
 
         :return: transformed weight matrix
         """
         return self.elu(self._weight) + 1
 
     def forward(self, x):
-        return x @ self.weight.T
+        out = x @ self.weight.T
+        if self.bias is not None:
+            out = out + self.bias
+        return out
+
 
     
 class NonNegBias(nn.Module):
@@ -55,7 +75,33 @@ class NonNegBias(nn.Module):
 
     def forward(self, x):
         return x + self.bias
-    
+
+
+class Linear(nn.Module):
+    def __init__(self, d_in, d_out, bias, activation=None) -> None:
+        """Linear layer
+
+        :param d_in: number of input features
+        :param d_out: number of output features
+        :param bias: whether to use bias
+        :param activation: activation function to be applied to the output
+        """
+        super().__init__()
+        self.linear = nn.Linear(d_in, d_out, bias=bias)
+        if activation == 'sigmoid':
+            self.activation = nn.Sigmoid()
+        elif activation == 'tanh':    
+            self.activation = nn.Tanh()
+        elif activation == 'relu':
+            self.activation = nn.ReLU()
+        elif activation is None:
+            self.activation = nn.Identity()
+
+    def forward(self, x):
+        x = self.linear(x)
+        return self.activation(x)
+
+
 class NonNegScale(nn.Module):
     def __init__(self, d) -> None:
         """Non-negative bias layer (i.e., add a non-negative vector to the output)
@@ -107,19 +153,25 @@ class BilinearAttention(nn.Module):
         self.n_heads = n_heads
         self.n_scales = n_scales
 
+
+        self.gene_encoder = Gene_Encoder(input_dim=self.d_in, output_dim=512, bias=True)
         # self.switch = ScaleSwtich(n_heads, n_scales=2)
 
         # A bias layer for the output to account for any "DC" component
-        self.bias = NonNegBias(d_out)
+        #self.bias = NonNegBias(d_out)
 
         # The transforms are shared by all scales
         # n * g -> n * d
-        self.q = NonNegLinear(d_in, n_heads, bias=False) # each row of the weight matrix is a metagene (x -> x @ w.T)
+        self.q = NonNegLinear(512, n_heads, bias=True) # each row of the weight matrix is a metagene (x -> x @ w.T)
+        #self.q = Linear(d_in, n_heads, bias=True, activation='relu')
         # self.k = NonNegLinear(d_in, n_heads, bias=False) # each row ...
         
-        self.k_local = NonNegLinear(d_in, n_heads, bias=False)
-        self.k_regionals = nn.ModuleList(NonNegLinear(d_in, n_heads, bias=False)
-                                         for i in range(n_scales - 2))
+        self.k_local = NonNegLinear(512, n_heads, bias=True)
+        #self.k_local = Linear(d_in, n_heads, bias=True, activation='sigmoid')
+        #self.k_regionals = nn.ModuleList(NonNegLinear(d_in, n_heads, bias=False)
+        #                                 for i in range(n_scales - 2))
+        #self.k_regionals = nn.ModuleList(Linear(d_in, n_heads, bias=True)
+        #                                 for i in range(n_scales - 2))
             
         self.w_ego = NonNegScale(n_heads)
 
@@ -129,8 +181,8 @@ class BilinearAttention(nn.Module):
 
         self.tanh = nn.Tanh() # for clamping of the values
 
-        self.v = NonNegLinear(n_heads, d_out, bias=False) # each column ...
-        # self.v = TransposedNonNegLinear(self.q)
+        self.v = NonNegLinear(n_heads, d_out, bias=True) # each column ...
+        #self.v = Linear(n_heads, d_out, bias=True, activation='relu')
 
         # remember some variables during forward
         # Note: with gradient; detach before use when gradient is not needed
@@ -211,30 +263,31 @@ class BilinearAttention(nn.Module):
 
         if masked_x is None:
             masked_x = x
-            
+        
+        emb = self.gene_encoder(masked_x)
         # Get embeddings for all cells and regions
-        q_emb = self.q(masked_x) / x.shape[1]
-        k_local_emb = self.k_local(x) / x.shape[1]
-        k_regional_embs = [self.k_regionals[i](regional_x) / x.shape[1] 
-                           for i, regional_x in enumerate(regional_xs)]
+        q_emb = self.q(emb) / emb.shape[1]
+        k_local_emb = self.k_local(emb) / emb.shape[1]
+        #k_regional_embs = [self.k_regionals[i](regional_x) / x.shape[1] 
+        #                   for i, regional_x in enumerate(regional_xs)]
 
         # Get raw attention scores
         # scale_switch = self.switch() # h * s
-        ego_score = self.w_ego(self.score_intrinsic(q_emb, q_emb)) # * scale_switch[:, 0].reshape([1, self.n_heads])
+        #ego_score = self.w_ego(self.score_intrinsic(q_emb, q_emb)) # * scale_switch[:, 0].reshape([1, self.n_heads])
         #local_score = (self.score_interactive(q_emb, k_local_emb, adj_list)) #  * scale_switch[:, 1].reshape([1, self.n_heads, 1]) # n * h * m
         local_score = self.w_local((self.score_interactive(q_emb, k_local_emb,
                                               adj_list)))  # * scale_switch[:, 1].reshape([1, self.n_heads, 1]) # n * h * m
 
         #regional_scores = [(self.score_interactive(q_emb, k_regional_emb, regional_adj_list))
         #                   for i, (k_regional_emb, regional_adj_list) in enumerate(zip(k_regional_embs, regional_adj_lists))]
-        regional_scores = [(self.w_global(self.score_interactive(q_emb, k_regional_emb, regional_adj_list)))
-                           for i, (k_regional_emb, regional_adj_list) in
-                           enumerate(zip(k_regional_embs, regional_adj_lists))]
+        #regional_scores = [(self.w_global(self.score_interactive(q_emb, k_regional_emb, regional_adj_list)))
+        #                   for i, (k_regional_emb, regional_adj_list) in
+        #                   enumerate(zip(k_regional_embs, regional_adj_lists))]
         # regional_scores = [self.score_interactive(q_emb, k_regional_emb, adj_list) * scale_switch[:, i + 2].reshape([1, self.n_heads, 1]) for i, k_regional_emb in enumerate(k_regional_embs)]
 
         # Normalize attention scores
         sum_local_score = torch.sum(local_score, dim=-1)
-        sum_regional_scores = [torch.sum(regional_score, dim=-1) for regional_score in regional_scores]
+        #sum_regional_scores = [torch.sum(regional_score, dim=-1) for regional_score in regional_scores]
         #sum_score = ego_score + sum_local_score + sum(sum_regional_scores) # n * h
         sum_score = sum_local_score
         normalization_factor = sum_score.sum(axis=-1, keepdim=True) + 1e-9 # n * 1
@@ -247,24 +300,26 @@ class BilinearAttention(nn.Module):
 
         self.q_emb = q_emb
         self.k_local_emb = k_local_emb
-        self.k_regional_embs = k_regional_embs
+        #self.k_regional_embs = k_regional_embs
 
         if get_details:
-            ego_attnp = ego_score / normalization_factor
+            #ego_attnp = ego_score / normalization_factor
             local_attnp = local_score / normalization_factor[:, :, None]
-            regional_attnps = [regional_score / normalization_factor[:, :, None] for regional_score in regional_scores]
+            #regional_attnps = [regional_score / normalization_factor[:, :, None] for regional_score in regional_scores]
             # regional_attnps = [regional_score for regional_score in regional_scores]
 
-            ego_attnm = ego_attnp
-            local_attnm = local_attnp.sum(axis=-1)
-            regional_attnms = [regional_attnp.sum(axis=-1) for regional_attnp in regional_attnps]
+            #ego_attnm = ego_attnp
+            #local_attnm = local_attnp.sum(axis=-1)
+            #regional_attnms = [regional_attnp.sum(axis=-1) for regional_attnp in regional_attnps]
 
             return res, {
                 'attn': sum_attn,
                 'embq': q_emb,
-                'embk': (k_local_emb, k_regional_embs),
-                'attnp': (ego_attnp, local_attnp, regional_attnps),
-                'attnm': (ego_attnm, local_attnm, regional_attnms)}
+                'embk': k_local_emb,
+            #    'embk': (k_local_emb, k_regional_embs),
+                #'attnp': (ego_attnp, local_attnp, regional_attnps),
+                #'attnm': (ego_attnm, local_attnm, regional_attnms)
+                }
         else:
             return res
 
@@ -376,7 +431,7 @@ class Steamboat(nn.Module):
         cnt = 0
         best_loss = np.inf
 
-        for epoch in range(max_epoch):
+        for epoch in tqdm(range(max_epoch)):
             losses = []
             optimizer.zero_grad()
             for x, adj_list, regional_xs, regional_adj_lists in loader:

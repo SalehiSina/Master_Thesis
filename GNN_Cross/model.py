@@ -3,7 +3,6 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch_geometric.utils import softmax
 
-from sklearn.neighbors import NearestNeighbors
 import numpy as np
 
 
@@ -82,11 +81,7 @@ class SpatialTransformerAE(nn.Module):
         self.enc1 = SpatialTransformerLayer(hidden_dim, heads)
         self.enc2 = SpatialTransformerLayer(hidden_dim, heads)
 
-        self.to_latent = nn.Linear(hidden_dim*2, latent_dim)
-
-        # Decoder
-        #self.dec1 = SpatialTransformerLayer(latent_dim, heads)
-        #self.dec2 = SpatialTransformerLayer(latent_dim, heads)
+        self.to_latent = nn.Linear(hidden_dim, latent_dim)
 
         self.output_proj = nn.Linear(latent_dim, gene_dim)
 
@@ -104,9 +99,7 @@ class SpatialTransformerAE(nn.Module):
         h = torch.concatenate((h_m,h_g), dim=-1)
         z = self.to_latent(h)
 
-        # Decode
-        z = F.relu(z)
-        out = self.output_proj(z)
+        out = self.output_proj(F.relu(z))
 
         
         if details:

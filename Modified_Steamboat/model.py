@@ -6,34 +6,66 @@ from torch.utils.data import DataLoader
 from .dataset import SteamboatDataset
 import os
 
-class Encoder(nn.Module):
-    def __init__(self, input_dim, output_dim, hidden_dim1=1024):
-        super(Encoder, self).__init__()
+from tqdm import tqdm
+
+class Morpho_Encoder(nn.Module):
+    def __init__(self, input_dim, output_dim, bias=False, hidden_dim=1024):
+        super().__init__()
         
         self.network = nn.Sequential(
-            nn.Linear(input_dim, hidden_dim1, bias=False),
-            nn.Linear(hidden_dim1, output_dim, bias=False),
-            nn.ReLU()
+            nn.Linear(input_dim, hidden_dim, bias=bias),
+            nn.ReLU(),
+            nn.Linear(hidden_dim, output_dim, bias=bias),
+            nn.ReLU(),
         )
 
     def forward(self, x):
         return self.network(x)
 
+class Gene_Encoder(nn.Module):
+    def __init__(self, input_dim, output_dim, bias=False):
+        super().__init__()
+        
+        self.network = nn.Sequential(
+            nn.Linear(input_dim, output_dim, bias=bias),
+            nn.ReLU(),
+        )
 
+    def forward(self, x):
+        return self.network(x)
+
+class ScalarGate(nn.Module):
+    def __init__(self, dim):
+        super().__init__()
+        self.gate_fc = nn.Linear(2 * dim, 1)
+        #self.gate_fc = nn.Linear(dim, 1)
+        
+    def forward(self, z_gene, z_morph):
+        # z_gene, z_morph: [B, dim]
+        gate_input = torch.cat([z_gene, z_morph], dim=-1)
+        alpha = torch.sigmoid(self.gate_fc(gate_input))  # [B, 1]
+        #alpha = torch.sigmoid(self.gate_fc(z_gene))  # [B, 1]
+        #fused = z_gene + alpha * z_morph
+        fused = alpha * z_gene + (1 - alpha) * z_morph
+        #fused = torch.cat([alpha * z_gene, (1 - alpha) * z_morph], dim=-1)
+        return fused, alpha
+    
 class NonNegLinear(nn.Module):
-    def __init__(self, d_in, d_out, bias) -> None:
-        """Nonegative linear layer
+    def __init__(self, d_in, d_out, bias=True) -> None:
+        """Nonnegative linear layer
 
         :param d_in: number of input features
         :param d_out: number of output features
-        :param bias: umimplemented
-        :raises NotImplementedError: when bias is True
+        :param bias: if True, adds a learnable (unconstrained) bias term
         """
         super().__init__()
         self._weight = torch.nn.Parameter(torch.randn(d_out, d_in) - 3)
         self.elu = nn.ELU()
+
         if bias:
-            raise NotImplementedError()
+            self.bias = torch.nn.Parameter(torch.zeros(d_out))
+        else:
+            self.register_parameter("bias", None)
 
     @property
     def weight(self):
@@ -44,29 +76,11 @@ class NonNegLinear(nn.Module):
         return self.elu(self._weight) + 1
 
     def forward(self, x):
-        return x @ self.weight.T
+        out = x @ self.weight.T
+        if self.bias is not None:
+            out = out + self.bias
+        return out
 
-    
-class NonNegBias(nn.Module):
-    def __init__(self, d) -> None:
-        """Non-negative bias layer (i.e., add a non-negative vector to the output)
-
-        :param d: number of input/output features
-        """
-        super().__init__()
-        self._bias = torch.nn.Parameter(torch.zeros(1, d))
-        self.elu = nn.ELU()
-
-    @property
-    def bias(self):
-        """Transform bias to be non-negative
-
-        :return: non-negative bias
-        """
-        return self.elu(self._bias) + 1
-
-    def forward(self, x):
-        return x + self.bias
     
 class NonNegScale(nn.Module):
     def __init__(self, d) -> None:
@@ -116,22 +130,25 @@ class HadmardAttention(nn.Module):
         self.d_in = d_in
         self.d_in_M = d_in_M
         if d_concat == None:
-            self.d_concat = d_in + d_in_M
+            self.d_concat = 1024
         else:
             self.d_concat = d_concat
         self.n_heads = n_heads
         self.n_scales = n_scales
 
-        self.encoder = Encoder(input_dim=self.d_in_M, output_dim=self.d_in_M)
+        self.morpho_encoder = Morpho_Encoder(input_dim=self.d_in_M, output_dim=512, bias=True, hidden_dim=2048)
+        self.gene_encoder = Gene_Encoder(input_dim=self.d_in, output_dim=512, bias=True)
+        
+        self.gate = ScalarGate(512)
 
-        self.q = NonNegLinear(self.d_in, n_heads, bias=False)
+        self.q = NonNegLinear(512, n_heads, bias=True)
         #self.k = NonNegLinear(self.d_concat, n_heads, bias=False)
-        self.k_local = NonNegLinear(self.d_concat, n_heads, bias=False)
+        self.k_local = NonNegLinear(512, n_heads, bias=True)
             
         #self.w_ego = NonNegScale(n_heads)
         self.w_local = NonNegScale3(n_heads)
 
-        self.v = NonNegLinear(n_heads, d_in, bias=False)
+        self.v = NonNegLinear(n_heads, d_in, bias=True)
 
 
         self.cosine_similarity = nn.CosineSimilarity(dim=-2)
@@ -198,11 +215,15 @@ class HadmardAttention(nn.Module):
             masked_m = m
 
         #emb = self.encoder(torch.concatenate((masked_x, masked_m), axis=-1))
-        encoded_m = self.encoder(masked_m)
-        emb = torch.concatenate((masked_x, encoded_m), axis=-1)
+        encoded_m = self.morpho_encoder(masked_m)
+        encoded_g = self.gene_encoder(masked_x)
+        
+        #emb, alpha = self.gate(encoded_g, encoded_m)
+        emb, alpha = self.gate(encoded_g, encoded_m)
+        #emb = torch.concatenate((encoded_g, encoded_m), axis=-1)
         
         # Get embeddings for all cells
-        q_emb = self.q(masked_x) / emb.shape[1]
+        q_emb = self.q(emb) / emb.shape[1]
 
         #k_emb = self.k(emb) / emb.shape[1]
 
@@ -229,13 +250,9 @@ class HadmardAttention(nn.Module):
             #ego_attnm = ego_attnp
             local_attnm = local_attnp.sum(axis=-1)
 
-            return res_g, {
-                'attn': sum_attn,
-                'attnp': local_attnp,
-                'attnm': local_attnm
-                }
+            return res_g, alpha, local_attnp
         else:
-            return res_g
+            return res_g, alpha
 
     
 class Steamboat(nn.Module):
@@ -315,10 +332,17 @@ class Steamboat(nn.Module):
         else:
             optimizer = opt(parameters, **opt_args)
 
+        #scheduler = torch.optim.lr_scheduler.MultiStepLR(
+        #    optimizer,
+        #    milestones=[100],
+        #    gamma=0.1
+        #    )
+        
         cnt = 0
         best_loss = np.inf
-        for epoch in range(max_epoch):
+        for epoch in tqdm(range(max_epoch)):
 
+            alpha_list = []
             avg_loss = 0.
             optimizer.zero_grad()
             for x, m, adj_list in loader:
@@ -331,29 +355,37 @@ class Steamboat(nn.Module):
                 masked_x = self.masking(x, entry_masking_rate)
                 masked_m = m
 
-                x_recon = self.forward(adj_list, x, m, masked_x, masked_m)
+                x_recon, alpha = self.forward(adj_list, x, m, masked_x, masked_m)
+                alpha_list.extend(alpha.detach().cpu().tolist())
 
                 loss = criterion(x_recon, x)
                 avg_loss += loss.item()
 
                 loss.backward()
                 optimizer.step()
-
-            if best_loss - avg_loss < stop_eps:
+            
+            #scheduler.step()
+            alpha_m = np.mean(alpha_list)
+            #if best_loss - avg_loss < stop_eps:
+            if False:
                 cnt += 1
             else:
                 cnt = 0
             if report_per >= 0 and cnt >= stop_tol:
                 print(f"Stopping criterion met. Final loss =  {avg_loss:.5f}")
+
+                print(f"alpha: {alpha_m:.2f}")
                 break
             elif report_per > 0 and (epoch % report_per) == 0:
                 print(f"Epoch {epoch + 1}: loss =  {avg_loss:.5f}")
+                print(f"alpha: {alpha_m:.2f}")
             best_loss = min(best_loss, avg_loss)
         else:
             print(f"Maximum iterations reached. Final Loss:  {avg_loss:.5f}")
+            print(f"alpha: {alpha_m:.2f}")
             
         self.eval()
         if return_loss:
-            return avg_loss
+            return avg_loss, alpha_m
         else:
             return self

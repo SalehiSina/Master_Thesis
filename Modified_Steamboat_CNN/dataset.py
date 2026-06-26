@@ -16,7 +16,7 @@ import os
 # Default image transform
 # ─────────────────────────────────────────────
 base_transform = transforms.Compose([
-    transforms.CenterCrop(64),
+    transforms.CenterCrop(256),
     transforms.ToTensor(),
 ])
 
@@ -58,11 +58,16 @@ class M_SteamboatDataset(Dataset):
         self.M_global         = M_global        # shared; never copied per sample
         self.sparse_graph     = sparse_graph
         self.transform        = transform
+        self.image_paths = cell_image_paths
 
-        self.images = []
-        for img_path in tqdm(cell_image_paths, desc="Preloading images"):
-            self.images.append(self._load_image(img_path))
-        
+        #self.images = []
+        #for i, img_path in enumerate(cell_image_paths):
+        #for img_path in tqdm(cell_image_paths, desc="Preloading images"):
+        #    #if (i) % 1000 == 0 or i == len(cell_image_paths)-1:
+        #    #    print(f"Preloading image {i+1}/{len(cell_image_paths)}")
+        #    self.images.append(self._load_image(img_path))
+
+
 
     # ------------------------------------------------------------------
     def __len__(self):
@@ -76,33 +81,30 @@ class M_SteamboatDataset(Dataset):
         X_local = sample['X']           # [n_genes]
 
         # ── 2. Global gene expression (all cells) ────────────────────
-        # Returned as a reference; DataLoader will stack these into
-        # [batch, N, n_genes].  For very large N consider returning only
-        # X_local here and passing X_global separately as a collate hook.
-        X_global = self.X_global        # [N, n_genes]
+        #X_global = self.X_global        # [N, n_genes]
 
         # ── 3. Morphology image ────────────────────────────
-        image = self.images[index]  # [C, H, W]
+        image_path = self.image_paths[index]
+        image = self._load_image(image_path)  # [C, H, W]
+        #image = self.images[index]  # preloaded image tensor
 
         # ── 4. Adjacency (neighbours of this cell only) ───────────────
         adj = sample['adj']             # pre-sliced in make_dataset
 
         # ── 5. Cell index (useful for downstream look-ups) ────────────
-        #cell_idx = torch.tensor(index+1, dtype=torch.long)
         cell_id = sample['id']
 
         # ── 6. Morphological features ────────────────────────────
-        M_global = self.M_global        # [N, n_morpho]
+        #M_global = self.M_global        # [N, n_morpho]
         M_local = sample['M']           # [n_morpho]
+
+        
 
         return {
             'X_local':  X_local,    # [n_genes]
-            'X_global': X_global,   # [N, n_genes]  ← global context
             'M_local':  M_local,    # [n_morpho]
-            'M_global': M_global,   # [N, n_morpho]
             'image':    image,      # [C, H, W]
             'adj':      adj,        # neighbour indices/mask
-            #'cell_idx': cell_idx,   # scalar
             'cell_id':  cell_id,
         }
 

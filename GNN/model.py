@@ -3,7 +3,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch_geometric.utils import softmax
 
-from sklearn.neighbors import NearestNeighbors
+from tqdm import tqdm
 import numpy as np
 
 
@@ -24,6 +24,20 @@ def loss_fn(pred, target, gene_dim):
     #return F.mse_loss(pred[:, :gene_dim], target[:, :gene_dim])
     return F.mse_loss(pred, target[:, :gene_dim])
 
+class Encoder(nn.Module):
+    def __init__(self, input_dim, output_dim, bias,hidden_dim1=1048):
+        super(Encoder, self).__init__()
+
+        
+        self.network = nn.Sequential(
+            nn.Linear(input_dim, hidden_dim1, bias=bias),
+            nn.Linear(hidden_dim1, output_dim, bias=bias),
+            nn.Sigmoid(),
+        )
+
+    def forward(self, x):
+        return self.network(x)
+    
 
 ### V1,2: sparse message passing 
 class SpatialTransformerLayer(nn.Module):
@@ -72,64 +86,17 @@ class SpatialTransformerLayer(nn.Module):
             
         return out
 
-"""
-### V3: using MultiheadAttention in Pytorch (Claude Code)
-
-class SpatialTransformerLayer(nn.Module):
-    def __init__(self, dim, heads=4):
-        super().__init__()
-
-        self.heads = heads
-        self.dim = dim
-        self.head_dim = dim // heads
-
-        # Replaces q_lin, k_lin, v_lin, and out_lin
-        self.attn = nn.MultiheadAttention(dim, heads, batch_first=True)
-
-        # edge bias (distance encoding)
-        self.edge_mlp = nn.Sequential(
-            nn.Linear(1, heads),
-            nn.ReLU(),
-            nn.Linear(heads, heads)
-        )
-
-    def forward(self, x, edge_index, edge_attr):
-        row, col = edge_index
-        N = x.size(0)
-
-        # Build dense attention mask and add spatial edge bias
-        # attn_mask shape: (N, N) — will be broadcast across heads
-        attn_mask = torch.full((N, N), float('-inf'), device=x.device)
-
-        # edge_bias: (num_edges, heads) → scatter into (N, N, heads)
-        edge_bias = self.edge_mlp(edge_attr.unsqueeze(-1))  # (E, heads)
-
-        # Fill valid edges with bias values; use mean across heads for the scalar mask
-        # For per-head bias, we use attn_bias below instead
-        attn_bias = torch.full((N, N, self.heads), float('-inf'), device=x.device)
-        attn_bias[row, col] = edge_bias  # (N, N, heads)
-
-        # MultiheadAttention expects attn_mask: (N, N) or (N*heads, N, N)
-        # Reshape to (heads, N, N) then to (N*heads, N, N) for per-head bias
-        attn_mask = attn_bias.permute(2, 0, 1).reshape(N * self.heads, N, N)  # (heads*N, N, N) — incorrect shape, fix:
-        attn_mask = attn_bias.permute(2, 0, 1)  # (heads, N, N)
-
-        # x needs shape (1, N, dim) for batch_first=True with a single graph
-        x_in = x.unsqueeze(0)  # (1, N, dim)
-
-        # attn_mask must be (N, N) or (batch*heads, N, N); pass (heads, N, N) → repeat for batch
-        out, _ = self.attn(
-            x_in, x_in, x_in,
-            attn_mask=attn_mask.repeat(1, 1, 1)  # (heads, N, N)
-        )
-
-        out = out.squeeze(0)  # (N, dim)
-        return out
-"""
 
 class SpatialTransformerAE(nn.Module):
     def __init__(self, in_dim, gene_dim, hidden_dim=256, latent_dim=32, heads=4):
         super().__init__()
+        self.gene_dim = gene_dim
+
+        self.morpho_dim = int(in_dim - gene_dim)
+        
+        self.gene_encoder = Encoder(self.gene_dim,512, bias=False)
+        if self.morpho_dim > 0:
+            self.morpho_encoder = Encoder(self.morpho_dim,512, bias=False)
 
         # Input projection
         self.input_proj = nn.Linear(in_dim, hidden_dim)
@@ -140,14 +107,20 @@ class SpatialTransformerAE(nn.Module):
 
         self.to_latent = nn.Linear(hidden_dim, latent_dim)
 
-        # Decoder
-        #self.dec1 = SpatialTransformerLayer(latent_dim, heads)
-        #self.dec2 = SpatialTransformerLayer(latent_dim, heads)
-
         self.output_proj = nn.Linear(latent_dim, gene_dim)
 
     def forward(self, x, edge_index, edge_attr, details=False):
         # Encode
+        gene_part = x[:, :self.gene_dim]
+        gene_encoded = self.gene_encoder(gene_part)
+        
+        if self.morpho_dim > 0:
+            morpho_part = x[:, self.gene_dim:]
+            morpho_encoded = self.morpho_encoder(morpho_part)
+            x = torch.cat([gene_encoded, morpho_encoded], dim=-1)
+        else:
+            x = gene_encoded
+        
         h = F.relu(self.input_proj(x))
 
         h = h + self.enc1(h, edge_index, edge_attr)
@@ -155,12 +128,7 @@ class SpatialTransformerAE(nn.Module):
 
         z = self.to_latent(h)
 
-        # Decode
         h = F.relu(z)
-
-        #h = h + self.dec1(h, edge_index, edge_attr)
-        #h = h + self.dec2(h, edge_index, edge_attr)
-
         out = self.output_proj(h)
 
         
@@ -186,7 +154,7 @@ def fit(model, data,
 
     best_loss = np.inf
     cnt = 0
-    for epoch in range(max_epochs):
+    for epoch in tqdm(range(max_epochs)):
         model.train()
         optimizer.zero_grad()
 
@@ -199,7 +167,7 @@ def fit(model, data,
         loss.backward()
         optimizer.step()
 
-        if epoch % 1000 == 0:
+        if epoch % 200 == 0:
             print(f"Epoch {epoch} | Loss: {loss.item():.4f}")
             print(f"Best : {best_loss:.4f}")
         

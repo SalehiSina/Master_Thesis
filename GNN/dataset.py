@@ -21,11 +21,13 @@ def prep_adata(adata: sc.AnnData, norm=True, log1p=True) -> list[sc.AnnData]:
 def build_graph(adata, k=8, coord_key="spatial", gene_key="X", morph_key="morph_emb"):
 
     gene = adata.X if isinstance(adata.X, np.ndarray) else adata.X.toarray()
-    morph = adata.obsm[morph_key]
-
-    x = np.concatenate([gene, morph], axis=1)
-    #x = gene
-    x = torch.tensor(x, dtype=torch.float32)
+    if morph_key == None:
+        x = gene
+        x = torch.tensor(x, dtype=torch.float32)
+    else:
+        morph = adata.obsm[morph_key]
+        x = np.concatenate([gene, morph], axis=1)
+        x = torch.tensor(x, dtype=torch.float32)
 
     coords = adata.obsm[coord_key]
     nbrs = NearestNeighbors(n_neighbors=k+1).fit(coords)
