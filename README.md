@@ -1,2 +1,2 @@
-# Multi Modal Representation
-this is my thesis repository part 2
+# Multi-Modal Representation Learning
+This is my Master's thesis repository
