@@ -12,6 +12,7 @@ import scanpy as sc
 import squidpy as sq
 from tqdm.notebook import tqdm
 import numpy as np
+import pandas as pd
 
 from sklearn.decomposition import PCA
 from sklearn.cluster import KMeans
@@ -80,7 +81,7 @@ def km(adata, embed_key, k):
     print("Inertia:", model.inertia_)
     print("Iterations run:", model.n_iter_)
 
-    adata.obs['pred_label'] = labels
+    adata.obs['pred_label'] = pd.Categorical(labels)
     print('Done!')
 
     return adata
@@ -219,6 +220,10 @@ if __name__ == "__main__":
     adata = sc.read_h5ad(ann_dir)
 
 
+    if dataset_name == 'Mouse_Brain':
+        mask = adata.obs['annotation'] == 'unassigned'
+
+
     #############################
     # Dimension Reduction
     #############################
@@ -227,17 +232,29 @@ if __name__ == "__main__":
     pca = PCA(n_components=50)
     X_reduced = pca.fit_transform(ad.obsm[embedding_key])
     ad.obsm['reduced_dim_embedding'] = X_reduced
+    
+    
+
+
+    #############################
+    # UMAP
+    #############################
+
 
     if clustering_type == 'UMAP':
-        #############################
-        # UMAP
-        #############################
-        print('... UMAP ...')
-        sc.pp.neighbors(ad, use_rep='reduced_dim_embedding', n_neighbors=15)
-        sc.tl.umap(ad)
-        sc.pl.umap(ad, color=target, title='')
 
-        plt.savefig(f"figures/{dataset_name}_{embedding_key}_umap_{embedding_key}.png", dpi=300, bbox_inches="tight")
+        if dataset_name == 'Mouse_Brain':
+            ad_m = ad[~mask].copy()
+        else:
+            ad_m = ad.copy()
+
+        
+        print('... UMAP ...')
+        sc.pp.neighbors(ad_m, use_rep='reduced_dim_embedding', n_neighbors=15)
+        sc.tl.umap(ad_m)
+        sc.pl.umap(ad_m, color=target, title='', show=False)
+        
+        plt.savefig(f"figures/{dataset_name}_{embedding_key}_umap_{embedding_key}.jpeg", dpi=300, bbox_inches="tight")
         
         print(f" saved in figures/{dataset_name}_{embedding_key}_umap_{embedding_key}")
         plt.close()
@@ -247,6 +264,11 @@ if __name__ == "__main__":
     #############################
     elif clustering_type == 'leiden':
         print('... leiden ... ')
+
+        if dataset_name == 'Mouse_Brain':
+            ad_m = ad[~mask].copy()
+        else:
+            ad_m = ad.copy()        
 
         if target == "annotation":
             res = 0.2
@@ -262,11 +284,13 @@ if __name__ == "__main__":
             target = "annotation"
             name = "segmentation"
 
-        sc.pp.neighbors(ad, use_rep='reduced_dim_embedding', key_added = 'added', n_neighbors=200)
-        sc.tl.leiden(ad, obsp='added_connectivities', key_added='_clusters_', resolution=res)
+        sc.pp.neighbors(ad_m, use_rep='reduced_dim_embedding', key_added = 'added', n_neighbors=200)
+        sc.tl.leiden(ad_m, obsp='added_connectivities', key_added='_clusters_', resolution=res)
 
+
+        
         sq.pl.spatial_scatter(
-            ad, color=[target], title = '', shape=None, figsize=(10, 5),
+            ad_m, color=[target], title = '', shape=None, figsize=(10, 5),
             ncols=2, legend_loc='right margin', frameon=False, size=2., lw=0., wspace=0.0,
             hspace=0.0, save=f'figures/{dataset_name}_{target}.jpeg'
             )
@@ -274,47 +298,57 @@ if __name__ == "__main__":
 
 
         sq.pl.spatial_scatter(
-            ad, color=['_clusters_'], title = '', shape=None, figsize=(10, 5),
+            ad_m, color=['_clusters_'], title = '', shape=None, figsize=(10, 5),
             ncols=2, legend_loc=None, frameon=False, size=2., lw=0., wspace=0.0,
             hspace=0.0, save=f'figures/{dataset_name}_{embedding_key}_{name}_leiden.jpeg'
             )
         print(f'saved in figures/{dataset_name}_{embedding_key}_{name}_leiden')
+
+        ari = adjusted_rand_score(ad_m.obs['annotation'].to_numpy(), ad_m.obs['_clusters_'].to_numpy())
+        print(f"{dataset_name}_{embedding_key}_{name}_leiden_ARI: ", ari)
 
 
     #############################
     # k-means
     #############################
     elif clustering_type == 'k-means':
+
         print('... k-means clustering ...')
 
+        if dataset_name == 'Mouse_Brain':
+            ad_m = ad[~mask].copy()
+        else:
+            ad_m = ad.copy()
+
         if target == "annotation":
-            k = len(np.unique(ad.obs['annotation']))
+            k = len(np.unique(ad_m.obs['annotation']))
             print('K = ', k)
             name = "segmentation"
 
         elif target == "cell_type":
-            k = len(np.unique(ad.obs['cell_type']))
+            k = len(np.unique(ad_m.obs['cell_type']))
             print('K = ', k)
             name = "cell_type"
         else:
             print("Please Specify the label to be annotation or cell_type")
             print("Labels set to be annotation")
-            k = len(np.unique(ad.obs['annotation']))
+            k = len(np.unique(ad_m.obs['annotation']))
             print('K = ', k)
             name = "segmentation"
 
-        ad = km(ad, embedding_key, k)
+        ad_m = km(ad_m, embedding_key, k)
 
 
         sq.pl.spatial_scatter(
-            ad, color=['pred_label'], title = '', shape=None, figsize=(10, 5),
+            ad_m, color=['pred_label'], title = '', shape=None, figsize=(10, 5),
             ncols=2, legend_loc=None, frameon=False, size=2., lw=0., wspace=0.0,
             hspace=0.0, save=f'figures/{dataset_name}_{embedding_key}_{name}_kmeans.jpeg'
             )
         print(f'saved in : figures/{dataset_name}_{embedding_key}_{name}_kmeans')
 
-        
-        ari = adjusted_rand_score(ad.obs['annotation'].to_numpy(), ad.obs['pred_label'].to_numpy())
+        #mask = ad.obs["annotation"] == "unassigned"
+        #ari = adjusted_rand_score(ad.obs['annotation'][~mask].to_numpy(), ad.obs['pred_label'][~mask].to_numpy())
+        ari = adjusted_rand_score(ad_m.obs['annotation'].to_numpy(), ad_m.obs['pred_label'].to_numpy())
         print(f"{dataset_name}_{embedding_key}_{name}_kmeans_ARI: ", ari)
 
     
@@ -322,12 +356,19 @@ if __name__ == "__main__":
     # Supervised Classification
     #############################
     elif clustering_type == 'Supervised':
-        ad_train, ad_test = split(ad, target, test_share = 0.8)
+
+        if dataset_name == 'Mouse_Brain':
+            ad_m = ad[~mask].copy()
+        else:
+            ad_m = ad.copy()
+
+
+        ad_train, ad_test = split(ad_m, target, test_share = 0.8)
         classification(ad_train, ad_test, embedding_key, target)
 
     else:
         print("Please enter a valid operation")
 
-        
+
     print('\n Finished!')
     

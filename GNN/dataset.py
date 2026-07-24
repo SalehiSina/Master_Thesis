@@ -14,7 +14,7 @@ def prep_adata(adata: sc.AnnData, norm=True, log1p=True) -> list[sc.AnnData]:
     if log1p:
         sc.pp.log1p(adata)
     
-    sc.pp.highly_variable_genes(adata, n_top_genes=2000, subset=True)
+    sc.pp.highly_variable_genes(adata, n_top_genes=1000, subset=True)
     
     return adata
 

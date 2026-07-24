@@ -25,21 +25,32 @@ def loss_fn(pred, target, gene_dim):
     return F.mse_loss(pred, target[:, :gene_dim])
 
 class Encoder(nn.Module):
-    def __init__(self, input_dim, output_dim, bias,hidden_dim1=1048):
-        super(Encoder, self).__init__()
-
+    def __init__(self, input_dim, output_dim, bias=False, hidden_dim=1024):
+        super().__init__()
         
         self.network = nn.Sequential(
-            nn.Linear(input_dim, hidden_dim1, bias=bias),
-            nn.Linear(hidden_dim1, output_dim, bias=bias),
-            nn.Sigmoid(),
+            nn.Linear(input_dim, hidden_dim, bias=bias),
+            nn.ReLU(),
+            nn.Linear(hidden_dim, output_dim, bias=bias),
+            nn.ReLU(),
         )
 
     def forward(self, x):
         return self.network(x)
-    
 
-### V1,2: sparse message passing 
+class ScalarGate(nn.Module):
+    def __init__(self, dim):
+        super().__init__()
+        self.gate_fc = nn.Linear(dim*2, 1)
+        
+    def forward(self, z_gene, z_morph):
+        gate_input = torch.cat([z_gene, z_morph], dim=-1)
+        
+        alpha = torch.sigmoid(self.gate_fc(gate_input))
+        fused = (1 - alpha) * z_gene + alpha * z_morph
+        return fused, alpha  
+
+### sparse message passing 
 class SpatialTransformerLayer(nn.Module):
     def __init__(self, dim, heads=4):
         super().__init__()
@@ -94,12 +105,16 @@ class SpatialTransformerAE(nn.Module):
 
         self.morpho_dim = int(in_dim - gene_dim)
         
-        self.gene_encoder = Encoder(self.gene_dim,512, bias=False)
+        self.gene_encoder = Encoder(self.gene_dim,512, bias=False, hidden_dim=2048)
+
+        #self.gate = ScalarGate(self.gene_dim)
+        self.gate = ScalarGate(512)
+
         if self.morpho_dim > 0:
-            self.morpho_encoder = Encoder(self.morpho_dim,512, bias=False)
+            self.morpho_encoder = Encoder(self.morpho_dim,512, bias=False, hidden_dim=2048)
 
         # Input projection
-        self.input_proj = nn.Linear(in_dim, hidden_dim)
+        self.input_proj = nn.Linear(512, hidden_dim)
 
         # Encoder
         self.enc1 = SpatialTransformerLayer(hidden_dim, heads)
@@ -117,11 +132,17 @@ class SpatialTransformerAE(nn.Module):
         if self.morpho_dim > 0:
             morpho_part = x[:, self.gene_dim:]
             morpho_encoded = self.morpho_encoder(morpho_part)
-            x = torch.cat([gene_encoded, morpho_encoded], dim=-1)
+            
+            z_gene = F.layer_norm(gene_encoded, (512,))
+            z_morph = F.layer_norm(morpho_encoded, (512,))
+            
+            #emb, alpha = self.gate(encoded_g, encoded_m)
+            emb, alpha = self.gate(z_gene, z_morph)
+            
         else:
-            x = gene_encoded
+            emb = gene_encoded
         
-        h = F.relu(self.input_proj(x))
+        h = F.relu(self.input_proj(emb))
 
         h = h + self.enc1(h, edge_index, edge_attr)
         h = h + self.enc2(h, edge_index, edge_attr)
@@ -135,7 +156,7 @@ class SpatialTransformerAE(nn.Module):
         if details:
             return out, z
         else:
-            return out
+            return out, alpha
     
 
 def fit(model, data,
@@ -155,20 +176,24 @@ def fit(model, data,
     best_loss = np.inf
     cnt = 0
     for epoch in tqdm(range(max_epochs)):
+        alpha_list = []
         model.train()
         optimizer.zero_grad()
 
         x_masked = mask_features(data, mask_ratio)
 
-        out = model(x_masked, data.edge_index, data.edge_attr)
+        out, alpha = model(x_masked, data.edge_index, data.edge_attr)
+        alpha_list.extend(alpha.detach().cpu().tolist())
 
         loss = loss_fn(out, data.x, data.gene_dim)
 
         loss.backward()
         optimizer.step()
 
-        if epoch % 200 == 0:
-            print(f"Epoch {epoch} | Loss: {loss.item():.4f}")
+        alpha_m = np.mean(alpha_list)
+
+        if epoch % 50 == 0:
+            print(f"Epoch {epoch} | Loss: {loss.item():.4f} | alpha: {alpha_m}")
             print(f"Best : {best_loss:.4f}")
         
         if best_loss - loss.item() < stop_eps:
@@ -176,14 +201,15 @@ def fit(model, data,
         else:
             cnt = 0
         if cnt >= stop_tol:
-                print(f"Stopping criterion met. Final loss =  {loss.item():.4f}")
+                print(f"Stopping criterion met. Final loss =  {loss.item():.4f} | alpha: {alpha_m}")
                 break
         
         best_loss = min(best_loss, loss.item())
+        
 
     else:
         #print(f"Maximum iterations reached. Final Loss: gene_loss =  {avg_gene_loss:.5f}, morpho_loss =  {avg_morpho_loss:.5f}")
-        print(f"Maximum iterations reached. Final Loss:  {loss.item():.4f}")
+        print(f"Maximum iterations reached. Final Loss:  {loss.item():.4f} | alpha: {alpha_m}")
     
     if return_loss:
-        return loss.item()
+        return loss.item(), alpha_m

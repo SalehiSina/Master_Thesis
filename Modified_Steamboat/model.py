@@ -1,10 +1,13 @@
-import torch
+import copy
 import numpy as np
+
+import torch
 from torch import nn
 from torch import optim
 from torch.utils.data import DataLoader
 from .dataset import SteamboatDataset
 import os
+from torch.nn import functional as F
 
 from tqdm import tqdm
 
@@ -34,20 +37,45 @@ class Gene_Encoder(nn.Module):
     def forward(self, x):
         return self.network(x)
 
+class Encoder(nn.Module):
+    def __init__(self, input_dim, output_dim, bias=False, hidden_dim=1024):
+        super().__init__()
+        
+        self.network = nn.Sequential(
+            nn.Linear(input_dim, hidden_dim, bias=bias),
+            nn.ReLU(),
+            nn.Linear(hidden_dim, output_dim, bias=bias),
+            nn.ReLU(),
+        )
+
+    def forward(self, x):
+        return self.network(x)
+    
+
+class head_Encoder(nn.Module):
+    def __init__(self, input_dim, output_dim, bias=False):
+        super().__init__()
+        
+        self.network = nn.Sequential(
+            nn.Linear(input_dim, output_dim, bias=bias),
+            nn.ReLU(),
+        )
+
+    def forward(self, x):
+        return self.network(x)
+
 class ScalarGate(nn.Module):
     def __init__(self, dim):
         super().__init__()
-        self.gate_fc = nn.Linear(2 * dim, 1)
-        #self.gate_fc = nn.Linear(dim, 1)
+        self.gate_fc = nn.Linear(dim*2, 1)
         
-    def forward(self, z_gene, z_morph):
-        # z_gene, z_morph: [B, dim]
+    def forward(self, gene, morph, z_gene, z_morph):
         gate_input = torch.cat([z_gene, z_morph], dim=-1)
-        alpha = torch.sigmoid(self.gate_fc(gate_input))  # [B, 1]
-        #alpha = torch.sigmoid(self.gate_fc(z_gene))  # [B, 1]
-        #fused = z_gene + alpha * z_morph
-        fused = alpha * z_gene + (1 - alpha) * z_morph
-        #fused = torch.cat([alpha * z_gene, (1 - alpha) * z_morph], dim=-1)
+        #gate_input = torch.cat([gene, morph], dim=-1)
+        #gate_input = gene
+        alpha = torch.sigmoid(self.gate_fc(gate_input))
+        fused = (1 - alpha) * z_gene + alpha * z_morph  #Multi_modal
+        #fused = z_gene  #Single_modal
         return fused, alpha
     
 class NonNegLinear(nn.Module):
@@ -136,20 +164,24 @@ class HadmardAttention(nn.Module):
         self.n_heads = n_heads
         self.n_scales = n_scales
 
-        self.morpho_encoder = Morpho_Encoder(input_dim=self.d_in_M, output_dim=512, bias=True, hidden_dim=2048)
-        self.gene_encoder = Gene_Encoder(input_dim=self.d_in, output_dim=512, bias=True)
+        #self.morpho_encoder = Morpho_Encoder(input_dim=self.d_in_M, output_dim=512, bias=True, hidden_dim=2048)
+        #self.gene_encoder = Gene_Encoder(input_dim=self.d_in, output_dim=512, bias=True)
+        self.morpho_encoder = Encoder(self.d_in_M,512, bias=False, hidden_dim=2048)
+        self.gene_encoder = Encoder(self.d_in,512, bias=False, hidden_dim=2048)
         
+        #self.gate = ScalarGate(d_in+d_in_M)
         self.gate = ScalarGate(512)
+        self.head_embed = head_Encoder(input_dim=512, output_dim=256, bias=True)
+        #self.q = nn.Linear(512, n_heads, bias=False)
+        #self.k_local = nn.Linear(512, n_heads, bias=False)
 
-        self.q = NonNegLinear(512, n_heads, bias=True)
-        #self.k = NonNegLinear(self.d_concat, n_heads, bias=False)
-        self.k_local = NonNegLinear(512, n_heads, bias=True)
+        self.q = NonNegLinear(256, n_heads, bias=True)
+        self.k_local = NonNegLinear(256, n_heads, bias=True)
             
-        #self.w_ego = NonNegScale(n_heads)
         self.w_local = NonNegScale3(n_heads)
 
         self.v = NonNegLinear(n_heads, d_in, bias=True)
-
+        #self.v = nn.Linear(n_heads, d_in, bias=False)
 
         self.cosine_similarity = nn.CosineSimilarity(dim=-2)
 
@@ -179,6 +211,7 @@ class HadmardAttention(nn.Module):
         scores = q * k # nk * d
         if activation is not None:
             scores = activation(scores)
+        
         nominal_k = scores.shape[0] // q_emb.shape[0]
         if adj_list.shape[0] == 3: # masked for unequal neighbors
             scores.masked_fill_((adj_list[2, :] == 0).reshape([-1, 1]), 0.)
@@ -215,12 +248,16 @@ class HadmardAttention(nn.Module):
             masked_m = m
 
         #emb = self.encoder(torch.concatenate((masked_x, masked_m), axis=-1))
-        encoded_m = self.morpho_encoder(masked_m)
-        encoded_g = self.gene_encoder(masked_x)
-        
+        morpho_encoded = self.morpho_encoder(masked_m)
+        gene_encoded = self.gene_encoder(masked_x)
+
         #emb, alpha = self.gate(encoded_g, encoded_m)
-        emb, alpha = self.gate(encoded_g, encoded_m)
+        z_gene = F.layer_norm(gene_encoded, (512,))
+        z_morph = F.layer_norm(morpho_encoded, (512,))
+        z, alpha = self.gate(masked_x, masked_m, z_gene, z_morph)
         #emb = torch.concatenate((encoded_g, encoded_m), axis=-1)
+
+        emb = self.head_embed(z)
         
         # Get embeddings for all cells
         q_emb = self.q(emb) / emb.shape[1]
@@ -231,7 +268,7 @@ class HadmardAttention(nn.Module):
 
         # Get raw attention scores
         #ego_score = self.w_ego(self.score_intrinsic(q_emb, k_emb))
-        local_score = self.w_local((self.score_interactive(q_emb, k_local_emb, adj_list)))
+        local_score = self.w_local(self.score_interactive(q_emb, k_local_emb, adj_list))
 
         # Normalize attention scores
         sum_local_score = torch.sum(local_score, dim=-1)
@@ -248,9 +285,9 @@ class HadmardAttention(nn.Module):
             local_attnp = local_score / normalization_factor[:, :, None]
 
             #ego_attnm = ego_attnp
-            local_attnm = local_attnp.sum(axis=-1)
+            local_attnm = sum_attn
 
-            return res_g, alpha, local_attnp
+            return res_g, alpha, local_attnp, local_attnm
         else:
             return res_g, alpha
 
@@ -296,25 +333,6 @@ class Steamboat(nn.Module):
             max_epoch: int = 100, stop_eps: float = 1e-4, stop_tol: int = 10, 
             report_per: int = 10, return_loss=False):
 
-        """Create a PyTorch Dataset from a list of adata
-
-        :param dataset: Dataset to be trained on
-        :param entry_masking_rate: Rate of masking a random entries, default 0.0
-        :param feature_masking_rate: Rate of masking a full feature (can overlap with entry masking), default 0.0
-        :param device: Device to be used ("cpu" or "cuda")
-        :param local_entropy_penalty: entropy penalty to make the local attention more diverse
-        :param opt: Optimizer for fitting
-        :param opt_args: Arguments for optimizer (e.g., {'lr': 0.01})
-        :param loss_fun: Loss function: Default is MSE (`nn.MSELoss`). 
-        You may use MAE `nn.L1Loss`, Huber 'nn.HuberLoss`, SmoothL1 `nn.SmoothL1Loss`, or a customized loss function.
-        :param max_epoch: maximum number of epochs
-        :param stop_eps: Stopping criterion: minimum change (see also `stop_tol`)
-        :param stop_tol: Stopping criterion: number of epochs that don't meet `stop_eps` before stopping
-        :param log_dir: Directory to save logs
-        :param report_per: report per how many epoch. 0 to only report before termination. negative number to never report.
-
-        :return: self
-        """
         self.train()
 
         loader = DataLoader(dataset, batch_size=1, shuffle=True)
@@ -337,9 +355,12 @@ class Steamboat(nn.Module):
         #    milestones=[100],
         #    gamma=0.1
         #    )
+
+        best_state_dict = copy.deepcopy(self.state_dict())
         
         cnt = 0
         best_loss = np.inf
+        best_alpha = 0.
         for epoch in tqdm(range(max_epoch)):
 
             alpha_list = []
@@ -366,11 +387,12 @@ class Steamboat(nn.Module):
             
             #scheduler.step()
             alpha_m = np.mean(alpha_list)
-            #if best_loss - avg_loss < stop_eps:
-            if False:
+            if best_loss - avg_loss < stop_eps:
+            #if False:
                 cnt += 1
             else:
                 cnt = 0
+                best_state_dict = copy.deepcopy(self.state_dict())
             if report_per >= 0 and cnt >= stop_tol:
                 print(f"Stopping criterion met. Final loss =  {avg_loss:.5f}")
 
@@ -379,13 +401,24 @@ class Steamboat(nn.Module):
             elif report_per > 0 and (epoch % report_per) == 0:
                 print(f"Epoch {epoch + 1}: loss =  {avg_loss:.5f}")
                 print(f"alpha: {alpha_m:.2f}")
+            
             best_loss = min(best_loss, avg_loss)
+            best_alpha = alpha_m if avg_loss == best_loss else best_alpha
         else:
             print(f"Maximum iterations reached. Final Loss:  {avg_loss:.5f}")
             print(f"alpha: {alpha_m:.2f}")
+            best_loss = min(best_loss, avg_loss)
+            best_alpha = alpha_m if avg_loss == best_loss else best_alpha 
+            best_state_dict = copy.deepcopy(self.state_dict()) if loss.item() == best_loss else best_state_dict
+
             
+            # Restore the parameters from the best epoch.
+        self.load_state_dict(best_state_dict)
         self.eval()
         if return_loss:
-            return avg_loss, alpha_m
+            return best_loss, best_alpha
         else:
             return self
+
+
+

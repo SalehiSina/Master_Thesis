@@ -42,7 +42,7 @@ def prep_adatas(adata: sc.AnnData, n_neighs: int = 8, norm=True, log1p=True, sca
     if renorm:
         sc.pp.normalize_total(adata, target_sum=100, zero_center=False)
     
-    sc.pp.highly_variable_genes(adata, n_top_genes=2000, subset=True)
+    sc.pp.highly_variable_genes(adata, n_top_genes=1000, subset=True)
     sq.gr.spatial_neighbors(adata, n_neighs=n_neighs)
     
     return adata
