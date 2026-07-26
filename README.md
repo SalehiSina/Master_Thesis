@@ -1,4 +1,4 @@
-# Multi-Modal Representation Learning
+# Multimodal Representation Learning
 
 This repository contains the code, experiments, and supporting materials for my Master's thesis on **Multimodal Representation Learning for Xenium Datasets**.
 
